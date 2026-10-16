@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Termius 贴图助手</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m4 17 5-5 4 4 3-3 5 5"/><circle cx="15.5" cy="8" r="1.5"/></symbol>
+    <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z M9 20v-7h6v7"/></symbol>
+    <symbol id="icon-server" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M7 6.5h.1M7 17.5h.1M15 6.5h2M15 17.5h2"/></symbol>
+    <symbol id="icon-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.1M10 9h.1M14 9h.1M18 9h.1M6 13h.1M10 13h.1M14 13h.1M18 13h.1M8 16h8"/></symbol>
+    <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/></symbol>
+  </svg>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brandmark"><svg aria-hidden="true"><use href="#icon-image"/></svg></span><span>贴图助手</span></div>
+      <nav aria-label="主导航">
+        <button class="nav" data-page="home" aria-controls="page-home" aria-current="page"><svg aria-hidden="true"><use href="#icon-home"/></svg>概览</button>
+        <button class="nav" data-page="servers" aria-controls="page-servers"><svg aria-hidden="true"><use href="#icon-server"/></svg>服务器</button>
+        <button class="nav" data-page="settings" aria-controls="page-settings"><svg aria-hidden="true"><use href="#icon-keyboard"/></svg>快捷键与偏好</button>
+      </nav>
+      <div class="sidebar-foot"><p>截图留在剪贴板</p><p>路径填好，由你发送</p></div>
+    </aside>
+    <div class="workspace">
+      <header class="app-header"><span id="platform-label">正在连接本地应用</span><span class="badge" id="runtime-badge"><span class="dot"></span><span id="runtime-label">读取状态中</span></span></header>
+      <div class="connection-banner notice" id="connection-banner" role="status"><div><strong id="connection-title">正在连接本地应用</strong><p id="connection-message">配置和操作结果将由本机应用提供。</p></div><button type="button" id="retry-connection" hidden>重新连接</button></div>
+      <main>
+        <section class="page" id="page-home" aria-labelledby="home-title">
+          <div class="heading"><div><h1 id="home-title" tabindex="-1">贴图概览</h1><p class="muted">把截图带进远程对话。</p></div><button type="button" id="toggle-enabled" data-app-action disabled>暂停贴图</button></div>
+          <section class="target-panel" aria-label="当前上传目标">
+            <div class="row"><span class="eyebrow">当前上传目标</span><button type="button" class="link" id="manage-target">管理服务器</button></div>
+            <div class="target-name"><span class="server-icon"><svg aria-hidden="true"><use href="#icon-server"/></svg></span><div><h2 id="current-name">尚未选择服务器</h2><p class="mono muted" id="current-endpoint">连接本地应用后显示目标</p></div></div>
+            <div class="notice" id="home-notice">先添加服务器、核对身份并测试连接。</div>
+            <div class="target-footer"><span class="mono muted" id="current-directory">远程图片目录尚未配置</span><button type="button" id="check-active" data-app-action disabled>编辑与检查</button></div>
+          </section>
+          <section class="section" aria-labelledby="manual-upload-title">
+            <div class="section-title"><h2 id="manual-upload-title">从此窗口上传</h2><span class="small muted">上传后显示路径，由你复制</span></div>
+            <div class="upload-zone" id="upload-zone" aria-describedby="manual-upload-help">
+              <svg aria-hidden="true"><use href="#icon-upload"/></svg><div><strong>将图片文件拖到这里</strong><p class="small muted" id="manual-upload-help">也可以在此窗口按 Ctrl + V，或使用下面的按钮。</p></div>
+              <div class="button-group"><button type="button" id="upload-clipboard" data-app-action disabled>上传剪贴板图片</button><button type="button" id="upload-file" data-app-action disabled>选择图片</button></div>
+            </div>
+            <p class="hint" id="manual-input-note">窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。</p>
+            <div class="notice error" id="upload-error" role="alert" hidden></div>
+          </section>
+          <section class="operation section" id="operation" aria-labelledby="operation-title" hidden>
+            <div class="row"><div><h2 id="operation-title">正在处理</h2><p id="operation-message" class="muted"></p></div><button type="button" id="cancel-operation">取消操作</button></div>
+            <progress aria-label="操作进行中"></progress><p id="operation-target" class="small mono muted"></p>
+          </section>
+          <section class="section result-section" aria-labelledby="result-title">
+            <div class="section-title"><h2 id="result-title">最近一次结果</h2><span class="small muted" id="result-time"></span></div>
+            <div class="empty" id="result-empty"><p>还没有上传记录</p><p class="small muted">这里会显示实际上传结果、完整路径和下一步操作。</p></div>
+            <div id="result-content" hidden>
+              <div class="notice" id="result-summary" role="status"><strong id="result-status"></strong><p id="result-message"></p></div>
+              <p class="small mono muted" id="result-target"></p>
+              <div class="path-result" id="result-path-section" hidden><label for="result-path">远程图片路径</label><textarea id="result-path" class="mono" rows="2" readonly spellcheck="false"></textarea><div class="row"><p class="hint">复制路径会替换剪贴板中的截图，需要时再复制。</p><button type="button" id="copy-path" data-app-action disabled>复制路径</button></div></div>
+              <details id="result-details-section" hidden><summary>查看详细信息</summary><pre id="result-details"></pre></details>
+            </div>
+          </section>
+          <section class="section instructions-section" aria-labelledby="instructions-title"><h2 id="instructions-title">在 Termius 中贴图</h2><ol class="instructions"><li><h3>截取图片</h3><p>使用系统截图工具，将图片放入剪贴板。</p></li><li><h3>点击消息输入框</h3><p>确认该会话连接的就是上方服务器。</p></li><li><h3>按贴图快捷键</h3><div class="shortcut" id="home-shortcut">尚未读取</div><p id="shortcut-help">保持当前会话，等待路径出现后再发送。</p></li></ol></section>
+          <p class="footnote">上传期间离开 Termius，会停止自动输入。软件无法识别同一窗口里的标签页或输入框切换。自动操作不会覆盖截图，也不会按回车。</p>
+        </section>
+        <section class="page" id="page-servers" aria-labelledby="servers-title" hidden>
+          <div class="heading"><div><h1 id="servers-title" tabindex="-1">服务器</h1><p class="muted">保存连接，再明确选择当前上传目标。</p></div><button type="button" class="primary" id="add-server" data-app-action disabled>添加服务器</button></div>
+          <div class="notice error" id="servers-error" role="alert" hidden></div>
+          <div class="server-list" id="server-list"><p class="empty muted">正在读取服务器配置。</p></div>
+          <section class="editor" id="editor" aria-labelledby="editor-title" hidden>
+            <div class="section-title"><h2 id="editor-title" tabindex="-1">编辑服务器</h2><span class="small muted" id="editor-dirty">编辑不会切换当前目标</span></div>
+            <p class="hint" id="active-editor-note" hidden>这是当前上传目标。保存后，修改会用于下一次上传。</p>
+            <form id="server-form" novalidate>
+              <fieldset id="server-fields"><legend class="sr-only">服务器连接信息</legend><div class="form-grid">
+                <div class="field wide"><label for="server-name">名称</label><input id="server-name" name="name" maxlength="128" autocomplete="off" placeholder="例如：开发服务器" required><span class="field-error" id="name-error" hidden></span></div>
+                <div class="field"><label for="server-host">主机地址</label><input id="server-host" name="host" autocomplete="off" spellcheck="false" placeholder="主机名、IPv4 或 IPv6" required><span class="field-error" id="host-error" hidden></span></div>
+                <div class="field port-field"><label for="server-port">SSH 端口</label><input id="server-port" name="port" inputmode="numeric" maxlength="5" autocomplete="off" value="22" required><span class="field-error" id="port-error" hidden></span></div>
+                <div class="field wide"><label for="server-username">Linux 用户名</label><input id="server-username" name="username" autocomplete="off" spellcheck="false" placeholder="例如：user" required><span class="field-error" id="username-error" hidden></span></div>
+                <div class="field wide"><label for="server-directory">远程图片目录</label><input id="server-directory" name="remoteDirectory" autocomplete="off" spellcheck="false" placeholder="例如：/home/user/.cache/termius-images" required><p class="hint">使用 Linux 绝对路径。图片会保留在这里，供远程对话读取。</p><span class="field-error" id="directory-error" hidden></span></div>
+              </div>
+              <div class="connection-step"><div class="step-heading"><span class="step-number">1</span><div><h3>核对服务器身份</h3><p class="hint" id="trust-status">首次连接需要核对主机指纹。</p></div><button type="button" id="scan-host" data-app-action disabled>获取主机指纹</button></div>
+                <div class="fingerprint-saved" id="saved-fingerprint" hidden><span class="small muted">已信任的主机身份</span><p class="mono" id="saved-host-key"></p></div>
+                <div class="notice fingerprint-review" id="fingerprint-review" hidden><strong id="fingerprint-title">请核对主机指纹</strong><p class="mono" id="fingerprint-endpoint"></p><p class="mono fingerprint" id="fingerprint-value"></p><p>请与服务器管理员或已有可信记录核对。仅从网络读取到密钥，不能证明服务器身份。</p><p id="fingerprint-changed" class="danger-text" hidden>新密钥与已信任值不同。请先查明更换原因，再决定是否信任。</p><div class="button-group"><button type="button" id="reject-fingerprint">暂不信任</button><button type="button" id="confirm-fingerprint" class="primary" data-app-action disabled>核对一致，信任此指纹</button></div></div>
+              </div>
+              <div class="connection-step"><div class="step-heading"><span class="step-number">2</span><div><h3>选择 SSH 密钥</h3><p class="hint">已有授权可直接测试，无需重复首次授权。</p></div></div><div class="field"><label for="server-key">本机私钥文件</label><div class="input-action"><input id="server-key" name="keyFile" autocomplete="off" spellcheck="false" placeholder="选择已有私钥，或生成本工具专用密钥"><button type="button" id="choose-key" data-app-action disabled>浏览</button></div><span class="field-error" id="key-error" hidden></span></div><div class="button-group key-actions"><button type="button" id="generate-key" data-app-action disabled>生成专用密钥</button><button type="button" class="link" id="open-authorization" data-app-action disabled>首次授权此服务器</button></div><p class="hint">首次授权使用无口令 ED25519 密钥。其他密钥可在服务器完成授权后选择使用，密码不保存。</p></div>
+              <div class="connection-step"><div class="step-heading"><span class="step-number">3</span><div><h3>验证连接与图片目录</h3><p class="hint" id="verification-status">测试只验证当前编辑内容，不切换目标或写入授权。</p></div><button type="button" id="test-server" data-app-action disabled>测试连接</button></div></div>
+              </fieldset>
+              <div class="notice" id="editor-status" role="status" hidden></div>
+              <details id="editor-details-section" hidden><summary>查看详细信息</summary><pre id="editor-details"></pre></details>
+              <div class="actions"><button type="button" id="cancel-edit">取消编辑</button><button type="submit" id="save-server" class="primary" data-app-action disabled>保存服务器</button></div>
+              <p class="hint">保存只更新本机配置。新服务器保存后，需在列表中点击“设为当前目标”。</p>
+            </form>
+          </section>
+          <p class="footnote">每台服务器独立核对身份。删除本地配置不会删除服务器上的图片、SSH 密钥或已有授权。</p>
+        </section>
+        <section class="page" id="page-settings" aria-labelledby="settings-title" hidden>
+          <div class="heading"><div><h1 id="settings-title" tabindex="-1">快捷键与偏好</h1><p class="muted">设置保存在本机，不需要账号。</p></div></div>
+          <form id="preferences-form">
+            <div class="setting-row"><div><label for="shortcut-capture" class="setting-title">贴图快捷键</label><p class="muted">点击后直接按下组合键，Esc 取消录入。</p><p class="hint" id="shortcut-runtime"></p></div><button type="button" class="hotkey-input" id="shortcut-capture">尚未读取快捷键</button></div>
+            <div class="setting-row"><div><label for="legacy-shortcut" class="setting-title">保留 Ctrl + Alt + V</label><p class="muted">作为备用快捷键。被占用时不影响主快捷键。</p></div><input type="checkbox" id="legacy-shortcut" class="toggle"></div>
+            <div class="setting-row"><div><label for="close-to-tray" class="setting-title">关闭窗口后保持后台运行</label><p class="muted" id="tray-description">有托盘时收起到托盘，没有托盘时最小化到任务栏。</p></div><input type="checkbox" id="close-to-tray" class="toggle"></div>
+            <div class="setting-row"><div><label for="notifications" class="setting-title">上传结果通知</label><p class="muted">提示失败、自动输入取消与上传结果。</p></div><input type="checkbox" id="notifications" class="toggle"></div>
+            <section class="capabilities section" aria-labelledby="capabilities-title"><h2 id="capabilities-title">系统与可用能力</h2><dl id="capability-list"><div><dt>系统</dt><dd>等待本地应用</dd></div></dl><div class="notice" id="capability-description">自动输入能力由当前系统和桌面环境决定。</div></section>
+            <div class="notice" id="preferences-status" role="status" hidden></div>
+            <div class="actions"><button type="button" id="reset-shortcut">恢复默认快捷键</button><button type="submit" class="primary" id="save-preferences" data-app-action disabled>保存偏好</button></div>
+          </form>
+          <p class="footnote">自动操作不会按回车或覆盖剪贴板。窗口内上传、Wayland 或自动输入不可用时，可查看结果中的完整路径并自行复制。</p>
+        </section>
+      </main>
+      <footer class="app-footer"><span id="footer-status">所有连接和配置均在本机处理。</span><details><summary>配置文件位置</summary><p class="mono" id="settings-path">等待本地应用提供。</p></details></footer>
+    </div>
+  </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog"><h2 id="confirm-title">确认操作</h2><p id="confirm-message" class="dialog-message"></p><div class="actions"><button value="cancel" autofocus>取消</button><button value="confirm" id="confirm-action" class="primary">继续</button></div></form></dialog>
+  <dialog id="authorization-dialog" aria-labelledby="authorization-title"><form id="authorization-form"><h2 id="authorization-title">首次授权服务器</h2><p class="mono dialog-message" id="authorization-target"></p><div class="notice"><p>本次操作会将所选密钥的公钥追加到该用户的 authorized_keys，并创建图片目录。已有授权与图片会保留。</p></div><div class="field authorization-password"><label for="authorization-password">Linux 登录密码</label><input type="password" id="authorization-password" autocomplete="off" spellcheck="false" required><p class="hint">仅用于本次 SSH 登录，不保存、不写入日志或命令行。</p></div><div class="actions"><button type="button" id="cancel-authorization">取消</button><button type="submit" class="primary">授权并创建目录</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

@@ -1,0 +1,49 @@
+[package]
+name = "termius-image-paste"
+version = "2.0.0"
+description = "Windows 与 Linux 的 Termius 贴图助手"
+license = "MIT"
+repository = "https://github.com/vipxlm/termius-image-paste"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "termius_image_paste_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "net", "time", "sync", "fs", "rt-multi-thread", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+sha2 = "0.10"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3"
+zeroize = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["xtest", "xkb"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "unwind"

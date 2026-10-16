@@ -1,0 +1,15 @@
+/dist/
+/node_modules/
+/src-tauri/target/
+/src-tauri/gen/
+/output/
+/.worktrees/
+/settings.json
+.env
+.env.*
+!.env.example
+id_ed25519*
+id_rsa*
+*.pem
+*.p12
+*.pfx

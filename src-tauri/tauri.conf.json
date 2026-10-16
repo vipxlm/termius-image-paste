@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Termius 贴图助手",
+  "version": "2.0.0",
+  "identifier": "com.sean.termius-image-paste",
+  "build": { "frontendDist": "../ui" },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{ "label": "main", "title": "Termius 贴图助手", "width": 1060, "height": 800, "minWidth": 760, "minHeight": 620, "dragDropEnabled": true }],
+    "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'" }
+  },
+  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.png", "icons/icon.ico"], "shortDescription": "截图上传到 SSH 服务器并带回 Termius", "category": "Utility" }
+}
