@@ -1,0 +1,10 @@
+{
+  "name": "termius-image-paste",
+  "version": "2.0.0",
+  "private": true,
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/vipxlm/termius-image-paste.git" },
+  "description": "Windows 与 Linux 的 Termius 贴图助手",
+  "scripts": { "dev": "tauri dev", "build": "tauri build", "check": "cargo check --manifest-path src-tauri/Cargo.toml", "test": "cargo test --manifest-path src-tauri/Cargo.toml" },
+  "devDependencies": { "@tauri-apps/cli": "^2" }
+}

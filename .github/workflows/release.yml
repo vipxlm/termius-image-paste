@@ -1,0 +1,151 @@
+name: 编译并发布
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: 校验稳定发布标签
+        shell: bash
+        run: node tools/check-version.mjs --tag "$RELEASE_TAG"
+      - name: 安装 Linux 构建和测试依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config curl wget file ca-certificates libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libxtst-dev openssh-client iputils-ping dpkg-dev python3 xvfb xauth
+      - name: 安装固定 Rust 工具链
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+      - name: 检查版本和前端
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node --check ui/app.js
+          node --check tools/check-version.mjs
+          node --check tools/third-party-notices.mjs
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Windows 测试
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Linux 测试（含 X11 夹具）
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: 收集 Windows 第三方许可文本
+        if: runner.os == 'Windows'
+        run: node tools/third-party-notices.mjs dist/THIRD_PARTY_NOTICES-windows-x86_64.txt
+      - name: 收集 Linux 第三方许可文本
+        if: runner.os == 'Linux'
+        run: node tools/third-party-notices.mjs dist/THIRD_PARTY_NOTICES-linux-x86_64.txt
+      - name: 编译 Windows 便携程序
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/package-windows.ps1
+      - name: 编译 Linux 程序与安装包
+        if: runner.os == 'Linux'
+        run: |
+          bash tools/package-linux.sh
+          tar -czf dist/TermiusImagePaste-linux-x86_64.tar.gz -C dist TermiusImagePaste-linux-x86_64 THIRD_PARTY_NOTICES-linux-x86_64.txt -C "$GITHUB_WORKSPACE" README.md LICENSE
+          dpkg-deb --info dist/termius-image-paste_*.deb
+      - name: 上传 Windows 构建资产
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-windows-x86_64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/TermiusImagePaste-windows-x86_64.exe
+            dist/TermiusImagePaste-windows-x86_64.zip
+            dist/THIRD_PARTY_NOTICES-windows-x86_64.txt
+      - name: 上传 Linux 构建资产
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux-x86_64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/TermiusImagePaste-linux-x86_64
+            dist/TermiusImagePaste-linux-x86_64.tar.gz
+            dist/termius-image-paste_*.deb
+            dist/THIRD_PARTY_NOTICES-linux-x86_64.txt
+
+  publish:
+    name: 发布完整 Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: 检查完整资产并生成 SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          version="${RELEASE_TAG#v}"
+          cd dist
+          assets=(TermiusImagePaste-windows-x86_64.exe TermiusImagePaste-windows-x86_64.zip TermiusImagePaste-linux-x86_64 TermiusImagePaste-linux-x86_64.tar.gz "termius-image-paste_${version}_amd64.deb" THIRD_PARTY_NOTICES-windows-x86_64.txt THIRD_PARTY_NOTICES-linux-x86_64.txt)
+          for asset in "${assets[@]}"; do test -s "$asset"; done
+          [[ "$(find . -maxdepth 1 -type f | wc -l)" -eq "${#assets[@]}" ]]
+          sha256sum -- "${assets[@]}" > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+      - name: 创建草稿、完整上传后公开
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo '同名 Release 已存在；为避免替换资产而停止。若此前失败留下草稿，请人工检查并删除该草稿后重跑。' >&2
+            exit 1
+          fi
+          cat > release-notes.md <<'NOTES'
+          Windows x64：下载 exe 直接运行，或下载 ZIP 解压后双击程序。需要系统 WebView2 和 OpenSSH 客户端。程序尚未进行代码签名。
+
+          Ubuntu 24.04+ x64：优先安装 .deb；tar.gz 保留程序执行权限，解压后仍需对应系统运行库。单独 ELF 下载后需 chmod +x。
+
+          X11 支持受保护的自动输入；Wayland 使用窗口内上传与手动复制路径。Linux 桌面、输入法、托盘及真实 Termius 操作仍需按 README 实机验收。
+
+          本版本由 GitHub Actions 从标签源码自动测试和编译，校验值见 SHA256SUMS.txt。
+          NOTES
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "Termius 贴图助手 $RELEASE_TAG" --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

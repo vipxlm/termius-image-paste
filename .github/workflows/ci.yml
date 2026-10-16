@@ -1,0 +1,60 @@
+name: 检查与测试
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.1'
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: 安装 Linux 构建和测试依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config curl wget file ca-certificates libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libxtst-dev openssh-client iputils-ping dpkg-dev python3 xvfb xauth
+      - name: 安装固定 Rust 工具链
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt
+      - name: 检查版本和前端
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node tools/check-version.mjs
+          node --check ui/app.js
+          node --check tools/check-version.mjs
+          node --check tools/third-party-notices.mjs
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Windows 测试
+        if: runner.os == 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Linux 测试（含 X11 夹具）
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --locked --manifest-path src-tauri/Cargo.toml

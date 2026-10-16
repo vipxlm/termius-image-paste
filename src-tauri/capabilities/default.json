@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "仅本地界面可调用贴图助手命令和接收状态事件",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
