@@ -329,7 +329,7 @@
     renderShortcut();
     $('settings-path').textContent = next.settingsPath || '本地应用未返回配置路径。';
     if (editorProfile) {
-      $('active-editor-note').hidden = editorProfile.id !== state.settings.activeServerId;
+      $('active-editor-note').hidden = editorProfile.id !== activeProfile()?.id;
       renderEditorTrust();
     }
     renderAvailability();
@@ -404,7 +404,7 @@
     clearFieldErrors();
     $('editor-title').textContent = profile ? '编辑服务器' : '添加服务器';
     $('editor-dirty').textContent = '编辑不会切换当前上传目标';
-    $('active-editor-note').hidden = !profile || profile.id !== state?.settings?.activeServerId;
+    $('active-editor-note').hidden = !profile || profile.id !== activeProfile()?.id;
     $('fingerprint-review').hidden = true;
     setEditorStatus('');
     $('editor').hidden = false;
@@ -602,7 +602,7 @@
   }
 
   async function removeProfile(profile) {
-    const active = profile.id === state?.settings?.activeServerId;
+    const active = profile.id === activeProfile()?.id;
     const approved = await confirmAction('删除本地服务器配置？', `删除“${profile.name}”的本地配置？${active ? '\n这是当前上传目标，删除后请重新确认上传目标。' : ''}\n\n服务器上的图片、SSH 密钥与已有授权均会保留。`, '删除配置');
     if (!approved) return;
     await perform('正在删除本地配置…', 'servers', async () => {
