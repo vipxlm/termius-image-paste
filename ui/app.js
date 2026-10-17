@@ -187,11 +187,11 @@
     $('current-name').textContent = profile?.name || '尚未选择服务器';
     $('current-endpoint').textContent = profile ? endpoint(profile) : '在“服务器”页面添加连接，并设为当前目标。';
     $('current-directory').textContent = profile?.remoteDirectory || '远程图片目录尚未配置';
-    if (!profile) notice('home-notice', '先添加服务器、核对身份并测试连接。');
+    if (!profile) notice('home-notice', '先添加服务器并登录。');
     else if (!profile.hostKey) notice('home-notice', '尚未信任此服务器的主机指纹。请编辑并核对后再上传。', 'error');
     else if (!profile.keyFile) notice('home-notice', '请先选择 SSH 私钥或生成专用密钥，再测试连接。');
     else if (profile.verifiedAt) notice('home-notice', `上次验证成功：${formatTime(profile.verifiedAt)}。请确认 Termius 当前会话也连接此服务器。`, 'success');
-    else notice('home-notice', '此配置尚未验证。先测试免密连接和图片目录，不会重新申请授权。');
+    else notice('home-notice', '此配置尚未验证。请编辑服务器，登录并保存。');
     const automatic = Boolean(state?.capabilities?.automaticInput);
     $('shortcut-help').textContent = automatic ? '保持当前会话和输入框，等路径出现后再发送。' : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
     $('manual-input-note').textContent = automatic ? '窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。' : '当前环境使用手动上传模式。上传后可查看完整路径，需要时自行复制到 Termius。';
@@ -243,7 +243,7 @@
         badge.textContent = '当前目标';
         actions.append(badge);
       } else actions.append(actionButton('设为当前目标', () => setActive(profile)));
-      actions.append(actionButton('编辑与检查', () => openEditor(profile)));
+      actions.append(actionButton('编辑服务器', () => openEditor(profile)));
       actions.append(actionButton('删除', () => removeProfile(profile), 'link danger-button'));
       row.append(info, actions);
       list.append(row);
@@ -518,7 +518,7 @@
       editorProfile = { ...readProfile(), verifiedAt: null };
       markEditorDirty();
       renderEditorTrust();
-      setEditorStatus('已选择私钥。已有授权可直接测试连接。');
+      setEditorStatus('已选择私钥。点击“登录并保存”验证已有授权。');
     });
   }
 
