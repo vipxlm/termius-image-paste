@@ -306,12 +306,6 @@ struct ScannedKey {
     key: String,
     fingerprint: String,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Verified {
-    verified_at: String,
-    message: String,
-}
 #[tauri::command]
 async fn scan_host_key(app: AppHandle, profile: ServerProfile) -> AppResult<ScannedKey> {
     let job = begin(
@@ -333,64 +327,69 @@ async fn scan_host_key(app: AppHandle, profile: ServerProfile) -> AppResult<Scan
     result
 }
 #[tauri::command]
-async fn test_server(app: AppHandle, profile: ServerProfile) -> AppResult<Verified> {
-    let job = begin(
-        &app,
-        "test",
-        "正在验证密钥与图片目录…",
-        Some(target_name(&profile)),
-    )?;
-    let result = state(&app)
-        .ssh
-        .test(&profile, job.token.clone())
-        .await
-        .map(|_| Verified {
-            verified_at: now(),
-            message: "密钥登录成功，图片目录可写。".into(),
-        });
-    finish(&app, &job, None);
-    result
-}
-#[tauri::command]
-async fn generate_key(app: AppHandle, profile: ServerProfile) -> AppResult<String> {
-    let job = begin(
-        &app,
-        "key",
-        "正在准备本机专用密钥…",
-        Some(target_name(&profile)),
-    )?;
-    let result = state(&app)
-        .ssh
-        .generate_key(&profile, job.token.clone())
-        .await;
-    finish(&app, &job, None);
-    result
-}
-#[tauri::command]
-async fn authorize_server(
+async fn login_server(
     app: AppHandle,
-    profile: ServerProfile,
-    password: String,
-) -> AppResult<Verified> {
+    mut profile: ServerProfile,
+    password: Option<String>,
+    use_default_directory: bool,
+) -> AppResult<ServerProfile> {
     let job = begin(
         &app,
-        "authorize",
-        "正在完成本次 SSH 授权…",
+        "connecting",
+        "正在登录并准备图片目录…",
         Some(target_name(&profile)),
     )?;
     let result = async {
-        let exe =
-            std::env::current_exe().map_err(|e| error("askpass", "无法定位密码辅助程序。", e))?;
-        state(&app)
+        let s = state(&app);
+        if let Some(password) = password {
+            if profile.key_file.is_empty() {
+                profile.key_file = s.ssh.generate_key(&profile, job.token.clone()).await?;
+            }
+            profile.validate(true)?;
+            let exe = std::env::current_exe()
+                .map_err(|e| error("askpass", "无法定位密码辅助程序。", e))?;
+            s.ssh
+                .authorize(&profile, password, &exe, job.token.clone())
+                .await?;
+        }
+        let paths = s
             .ssh
-            .authorize(&profile, password, &exe, job.token.clone())
+            .remote_directory(
+                &profile,
+                if use_default_directory {
+                    None
+                } else {
+                    Some(&profile.remote_directory)
+                },
+                false,
+                job.token.clone(),
+            )
             .await?;
-        Ok(Verified {
-            verified_at: now(),
-            message: "授权并验证成功，密码未保存。".into(),
-        })
+        profile.remote_directory = paths[0].clone();
+        s.ssh.test(&profile, job.token.clone()).await?;
+        profile.verified_at = Some(now());
+        Ok(profile)
     }
     .await;
+    finish(&app, &job, None);
+    result
+}
+#[tauri::command]
+async fn browse_remote_directory(
+    app: AppHandle,
+    profile: ServerProfile,
+    directory: Option<String>,
+) -> AppResult<Vec<String>> {
+    let job = begin(
+        &app,
+        "connecting",
+        "正在读取远端文件夹…",
+        Some(target_name(&profile)),
+    )?;
+    let result = state(&app)
+        .ssh
+        .remote_directory(&profile, directory.as_deref(), true, job.token.clone())
+        .await;
     finish(&app, &job, None);
     result
 }
@@ -836,9 +835,8 @@ pub fn run() {
             set_enabled,
             save_preferences,
             scan_host_key,
-            test_server,
-            generate_key,
-            authorize_server,
+            login_server,
+            browse_remote_directory,
             cancel_operation,
             choose_key_file,
             choose_image_file,

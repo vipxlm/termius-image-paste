@@ -616,6 +616,44 @@ impl SshClient {
         Ok(())
     }
 
+    pub async fn remote_directory(
+        &self,
+        profile: &ServerProfile,
+        directory: Option<&str>,
+        browse: bool,
+        token: CancellationToken,
+    ) -> AppResult<Vec<String>> {
+        profile.validate(true)?;
+        require_key(profile)?;
+        let command = if let Some(path) = directory {
+            if !path.starts_with('/') || has_control(path) || path.len() > 4096 {
+                return Err(AppError::new(
+                    "invalid_directory",
+                    "请选择有效的远端绝对路径。",
+                ));
+            }
+            format!("cd -- {} || exit 1; ", quote_posix(path))
+        } else if browse {
+            "cd -- \"$HOME\" || exit 1; ".into()
+        } else {
+            "umask 077; mkdir -p -- \"$HOME/.cache/termius-images\" && cd -- \"$HOME/.cache/termius-images\" || exit 1; ".into()
+        };
+        let listing = if browse {
+            "printf '%s\\0' \"$PWD\"; for entry in \"$PWD\"/*/ \"$PWD\"/.[!.]*/ \"$PWD\"/..?*/; do [ -d \"$entry\" ] && printf '%s\\0' \"${entry%/}\"; done; true"
+        } else {
+            "test -w . || exit 1; printf '%s\\0' \"$PWD\""
+        };
+        let mut args = self.base_args(profile, true)?;
+        args.extend([
+            "-p".into(),
+            profile.port.to_string(),
+            target(profile),
+            command + listing,
+        ]);
+        let output = run_program("ssh", args, &[], Duration::from_secs(30), token, &[0]).await?;
+        parse_remote_directories(&output.stdout)
+    }
+
     pub async fn generate_key(
         &self,
         profile: &ServerProfile,
@@ -816,7 +854,7 @@ impl SshClient {
                 detail: error.detail,
             });
         }
-        self.test(profile, token).await
+        Ok(())
     }
 
     async fn authorization_key(
@@ -952,6 +990,26 @@ impl SshClient {
         }
         Ok(path)
     }
+}
+
+fn parse_remote_directories(output: &str) -> AppResult<Vec<String>> {
+    let paths: Vec<String> = output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if !output.ends_with('\0')
+        || paths.is_empty()
+        || paths
+            .iter()
+            .any(|path| !path.starts_with('/') || has_control(path))
+    {
+        return Err(AppError::new(
+            "directory_output",
+            "无法读取远端目录，请检查服务器登录脚本输出。",
+        ));
+    }
+    Ok(paths)
 }
 
 fn require_key(profile: &ServerProfile) -> AppResult<()> {
@@ -1478,6 +1536,28 @@ mod tests {
             ..Settings::default()
         }
     }
+    #[test]
+    fn remote_directory_response_preserves_names_and_rejects_login_noise() {
+        assert_eq!(
+            parse_remote_directories("/srv/home\0/srv/home/图片 a'b\0/srv/home/.cache\0").unwrap(),
+            vec!["/srv/home", "/srv/home/图片 a'b", "/srv/home/.cache"]
+        );
+        for invalid in [
+            "",
+            "\0",
+            "/home",
+            "welcome\n/home\0",
+            "/home\0trailing output",
+            "/home\0relative\0",
+            "/home\0/bad\nname\0",
+        ] {
+            assert_eq!(
+                parse_remote_directories(invalid).unwrap_err().code,
+                "directory_output"
+            );
+        }
+    }
+
     #[test]
     fn validates_endpoints_and_paths() {
         let directory = tempfile::tempdir().unwrap();
