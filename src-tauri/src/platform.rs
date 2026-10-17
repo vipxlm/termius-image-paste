@@ -10,6 +10,7 @@ pub struct Target {
     pub window: u64,
     pub process: u32,
     pub epoch: u64,
+    pub session_title: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -18,6 +19,7 @@ pub struct Capabilities {
     pub platform: String,
     pub display_server: String,
     pub automatic_input: bool,
+    pub automatic_target_selection: bool,
     pub hotkey_available: bool,
     pub clipboard_available: bool,
     pub tray_available: bool,
@@ -43,6 +45,7 @@ pub fn capabilities() -> Capabilities {
         }
         .into(),
         automatic_input: available,
+        automatic_target_selection: cfg!(windows) && available,
         hotkey_available: available,
         clipboard_available: !wayland,
         tray_available: false,
@@ -67,6 +70,7 @@ pub fn capture_target() -> Option<Target> {
     }
     let before = EPOCH.load(Ordering::SeqCst);
     let (window, process) = native::foreground()?;
+    let session_title = native::session_title(window);
     if EPOCH.load(Ordering::SeqCst) != before {
         return None;
     }
@@ -74,6 +78,7 @@ pub fn capture_target() -> Option<Target> {
         window,
         process,
         epoch: before,
+        session_title,
     })
 }
 pub fn target_unchanged(target: &Target) -> bool {
@@ -144,6 +149,7 @@ mod native {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetForegroundWindow() -> Handle;
+        fn GetWindowTextW(window: Handle, text: *mut u16, count: i32) -> i32;
         fn GetWindowThreadProcessId(window: Handle, pid: *mut u32) -> u32;
         fn GetAsyncKeyState(key: i32) -> i16;
         fn SendInput(count: u32, inputs: *const Input, size: i32) -> u32;
@@ -172,14 +178,31 @@ mod native {
     }
     unsafe extern "system" fn changed(
         _: Handle,
-        _: u32,
-        _: Handle,
-        _: i32,
-        _: i32,
+        event: u32,
+        window: Handle,
+        object: i32,
+        child: i32,
         _: u32,
         _: u32,
     ) {
-        EPOCH.fetch_add(1, Ordering::SeqCst);
+        // Name changes belong to the foreground top-level window only.
+        if event == 3
+            || (event == 0x800c
+                && object == 0
+                && child == 0
+                && window == unsafe { GetForegroundWindow() })
+        {
+            EPOCH.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    pub fn session_title(window: u64) -> Option<String> {
+        let mut title = [0u16; 4096];
+        let length =
+            unsafe { GetWindowTextW(window as Handle, title.as_mut_ptr(), title.len() as i32) };
+        if length <= 0 || length as usize >= title.len() - 1 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&title[..length as usize]))
     }
     pub fn start_watcher() {
         std::thread::spawn(|| unsafe {
@@ -187,10 +210,16 @@ mod native {
             if hook.is_null() {
                 return;
             }
+            let title_hook = SetWinEventHook(0x800c, 0x800c, ptr::null_mut(), changed, 0, 0, 0);
+            if title_hook.is_null() {
+                UnhookWinEvent(hook);
+                return;
+            }
             WATCHER_READY.store(true, Ordering::SeqCst);
             let mut msg: Message = std::mem::zeroed();
             while GetMessageW(&mut msg, ptr::null_mut(), 0, 0) > 0 {}
             WATCHER_READY.store(false, Ordering::SeqCst);
+            UnhookWinEvent(title_hook);
             UnhookWinEvent(hook);
         });
     }
@@ -270,6 +299,31 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+        #[test]
+        fn title_notifications_invalidate_only_the_foreground_top_level_target() {
+            let foreground = unsafe { GetForegroundWindow() };
+            let before = EPOCH.load(Ordering::SeqCst);
+            unsafe {
+                changed(ptr::null_mut(), 0x800c, foreground, -4, 0, 0, 0);
+            }
+            assert_eq!(EPOCH.load(Ordering::SeqCst), before);
+            if !foreground.is_null() {
+                unsafe {
+                    changed(ptr::null_mut(), 0x800c, foreground, 0, 0, 0, 0);
+                }
+                assert!(EPOCH.load(Ordering::SeqCst) > before);
+            }
+        }
+        #[test]
+        #[ignore = "显式提供 Termius 窗口句柄后，只读验证原生标题读取，不切换窗口或输入"]
+        fn live_termius_title_readonly() {
+            let window: u64 = std::env::var("TERMIUS_WINDOW_HANDLE")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let title = session_title(window).expect("Termius 窗口标题可读");
+            assert!(title.starts_with("Termius - "));
+        }
         #[test]
         fn win_input_layout() {
             assert_eq!(
@@ -657,6 +711,9 @@ mod native {
             WATCHER_READY.store(false, Ordering::SeqCst);
         });
     }
+    pub fn session_title(_: u64) -> Option<String> {
+        None
+    }
     pub fn foreground() -> Option<(u64, u32)> {
         let desktop = DESKTOP.get()?.lock().ok()?;
         let _grab = ServerGrab::new(&desktop).ok()?;
@@ -866,6 +923,9 @@ mod native {
 mod native {
     use super::*;
     pub fn start_watcher() {}
+    pub fn session_title(_: u64) -> Option<String> {
+        None
+    }
     pub fn foreground() -> Option<(u64, u32)> {
         None
     }
@@ -886,12 +946,16 @@ mod tests {
             window: 1,
             process: 3,
             epoch: 4,
+            session_title: Some("Termius - example".into()),
         };
         let mut b = a.clone();
         b.epoch += 1;
         assert_ne!(a, b);
         b = a.clone();
         b.process += 1;
-        assert_ne!(a, b)
+        assert_ne!(a, b);
+        b = a.clone();
+        b.session_title = Some("Termius - another".into());
+        assert_ne!(a, b);
     }
 }

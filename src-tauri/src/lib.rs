@@ -38,12 +38,20 @@ struct LastResult {
     at: String,
     details: Option<String>,
 }
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct DetectedTarget {
+    session: String,
+    server_id: Option<String>,
+    message: String,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeState {
     shortcut_status: String,
     operation: Option<Operation>,
     last_result: Option<LastResult>,
+    detected_target: Option<DetectedTarget>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,6 +239,7 @@ async fn set_active_server(app: AppHandle, id: String) -> AppResult<Settings> {
             .ok_or_else(|| AppError::new("unknown_server", "服务器不存在。"))?;
         p.validate(true)?;
         settings.active_server_id = Some(id);
+        s.runtime.lock().unwrap().detected_target = None;
         persist(&app, settings)
     })
     .await
@@ -511,10 +520,30 @@ fn start_upload(
         if target.is_some() && !settings.enabled {
             return Err(AppError::new("paused", "贴图快捷键已暂停。"));
         }
-        let p = settings
-            .active_server()
-            .ok_or_else(|| AppError::new("no_target", "请先选择当前上传服务器。"))?
-            .clone();
+        let p = if platform::capabilities().automatic_target_selection {
+            if let Some(target) = &target {
+                // Read again at the actual hotkey boundary, not from the polling cache.
+                core::server_for_session(
+                    &settings.servers,
+                    target.session_title.as_deref().unwrap_or(""),
+                )?
+            } else if let Some(detected) = &s.runtime.lock().unwrap().detected_target {
+                settings
+                    .servers
+                    .iter()
+                    .find(|p| Some(&p.id) == detected.server_id.as_ref())
+                    .ok_or_else(|| AppError::new("session_unmatched", &detected.message))?
+            } else {
+                settings.active_server().ok_or_else(|| {
+                    AppError::new("no_target", "请先打开已配置服务器的 Termius 会话。")
+                })?
+            }
+        } else {
+            settings
+                .active_server()
+                .ok_or_else(|| AppError::new("no_target", "请先选择当前上传服务器。"))?
+        }
+        .clone();
         (p, s.generation.load(Ordering::SeqCst))
     };
     profile.validate(true)?;
@@ -717,7 +746,38 @@ async fn linux_tray_host() -> bool {
         .stderr(std::process::Stdio::null());
     matches!(tokio::time::timeout(Duration::from_secs(2),command.output()).await,Ok(Ok(output))if output.status.success()&&String::from_utf8_lossy(&output.stdout).trim()=="(<true>,)")
 }
+fn observe_target(app: &AppHandle) {
+    if !platform::capabilities().automatic_target_selection {
+        return;
+    }
+    let Some(target) = platform::capture_target() else {
+        return;
+    };
+    let s = state(app);
+    let settings = s.settings.lock().unwrap();
+    let title = target.session_title.as_deref().unwrap_or("");
+    let detected = match core::server_for_session(&settings.servers, title) {
+        Ok(server) => DetectedTarget {
+            session: title.into(),
+            server_id: Some(server.id.clone()),
+            message: format!("已跟随当前 Termius 会话：{}", server.name),
+        },
+        Err(error) => DetectedTarget {
+            session: title.into(),
+            server_id: None,
+            message: error.message,
+        },
+    };
+    drop(settings);
+    let mut runtime = s.runtime.lock().unwrap();
+    if runtime.detected_target.as_ref() != Some(&detected) {
+        runtime.detected_target = Some(detected);
+        drop(runtime);
+        publish(app);
+    }
+}
 fn bind_shortcuts(app: &AppHandle) {
+    observe_target(app);
     let s = state(app);
     let settings = s.settings.lock().unwrap().clone();
     let caps = platform::capabilities();
@@ -727,10 +787,13 @@ fn bind_shortcuts(app: &AppHandle) {
         Some("已暂停")
     } else if !caps.hotkey_available {
         Some("当前桌面使用手动上传")
-    } else if settings
-        .active_server()
-        .is_none_or(|p| p.validate(true).is_err())
-    {
+    } else if if caps.automatic_target_selection {
+        !settings.servers.iter().any(|p| p.validate(true).is_ok())
+    } else {
+        settings
+            .active_server()
+            .is_none_or(|p| p.validate(true).is_err())
+    } {
         Some("请先配置并选择服务器")
     } else if s.busy.lock().unwrap().is_some() {
         Some("操作进行中")
@@ -809,6 +872,18 @@ pub fn run() {
                                 start_upload(app.clone(), ImageSource::Clipboard, Some(target))
                             {
                                 let s = state(app);
+                                if s.settings.lock().unwrap().notifications {
+                                    let handle = app.clone();
+                                    let message = e.message.clone();
+                                    tauri::async_runtime::spawn_blocking(move || {
+                                        let _ = handle
+                                            .notification()
+                                            .builder()
+                                            .title("Termius 贴图助手")
+                                            .body(message)
+                                            .show();
+                                    });
+                                }
                                 s.runtime.lock().unwrap().last_result = Some(LastResult {
                                     status: "error".into(),
                                     stage: "start".into(),
@@ -855,6 +930,7 @@ pub fn run() {
             let runtime = RuntimeState {
                 shortcut_status: "正在检查系统能力…".into(),
                 operation: None,
+                detected_target: None,
                 last_result: startup_error.as_ref().map(|e| LastResult {
                     status: "error".into(),
                     stage: "settings".into(),

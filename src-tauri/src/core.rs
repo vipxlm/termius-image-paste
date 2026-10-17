@@ -1012,6 +1012,47 @@ fn parse_remote_directories(output: &str) -> AppResult<Vec<String>> {
     Ok(paths)
 }
 
+/// Match only exact saved aliases/endpoints; never guess from terminal output.
+pub fn server_for_session<'a>(
+    servers: &'a [ServerProfile],
+    window_title: &str,
+) -> AppResult<&'a ServerProfile> {
+    let session = window_title
+        .strip_prefix("Termius - ")
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !has_control(s))
+        .ok_or_else(|| {
+            AppError::new(
+                "session_unavailable",
+                "无法识别当前 Termius 会话，请打开对应服务器的独立标签页。",
+            )
+        })?;
+    let mut matches = servers.iter().filter(|server| {
+        let host = if server.host.contains(':') {
+            format!("[{}]", server.host)
+        } else {
+            server.host.clone()
+        };
+        [
+            server.name.clone(),
+            server.host.clone(),
+            format!("{host}:{}", server.port),
+            format!("{}@{host}", server.username),
+            format!("{}@{host}:{}", server.username, server.port),
+        ]
+        .iter()
+        .any(|alias| alias.trim().eq_ignore_ascii_case(session))
+    });
+    let matched = matches.next().ok_or_else(|| AppError::new("session_unmatched", "当前会话没有对应的服务器。请把已保存服务器名称设为 Termius 标签名，或让标签名使用连接地址。"))?;
+    if matches.next().is_some() {
+        return Err(AppError::new(
+            "session_ambiguous",
+            "当前会话对应多台服务器，请使用唯一的服务器名称和 Termius 标签名。",
+        ));
+    }
+    Ok(matched)
+}
+
 fn require_key(profile: &ServerProfile) -> AppResult<()> {
     if !Path::new(&profile.key_file).is_file() {
         return Err(AppError::new(
@@ -1536,6 +1577,67 @@ mod tests {
             ..Settings::default()
         }
     }
+    #[test]
+    fn session_target_requires_an_exact_unique_alias() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut first = profile(directory.path());
+        first.name = "开发机".into();
+        first.host = "192.0.2.10".into();
+        first.username = "developer".into();
+        first.port = 2222;
+        let mut second = first.clone();
+        second.id = "another-server".into();
+        second.name = "生产机".into();
+        second.host = "192.0.2.100".into();
+        let servers = vec![first.clone(), second];
+        for title in [
+            "Termius - 开发机",
+            "Termius - 192.0.2.10",
+            "Termius - developer@192.0.2.10:2222",
+        ] {
+            assert_eq!(server_for_session(&servers, title).unwrap().id, first.id);
+        }
+        for title in [
+            "Termius - 192.0.2.1",
+            "Termius - 开发",
+            "Termius - 开发机 extra",
+        ] {
+            assert_eq!(
+                server_for_session(&servers, title).unwrap_err().code,
+                "session_unmatched"
+            );
+        }
+        for title in [
+            "Termius",
+            "Another - 开发机",
+            "Termius - ",
+            "Termius - bad\nname",
+        ] {
+            assert_eq!(
+                server_for_session(&servers, title).unwrap_err().code,
+                "session_unavailable"
+            );
+        }
+        let mut duplicate = first.clone();
+        duplicate.username = "other".into();
+        let duplicate_servers = vec![first, duplicate];
+        assert_eq!(
+            server_for_session(&duplicate_servers, "Termius - 开发机")
+                .unwrap_err()
+                .code,
+            "session_ambiguous"
+        );
+        assert_eq!(
+            server_for_session(&duplicate_servers, "Termius - developer@192.0.2.10:2222")
+                .unwrap()
+                .username,
+            "developer"
+        );
+        let mut ipv6 = duplicate_servers[0].clone();
+        ipv6.host = "2001:db8::1".into();
+        assert!(server_for_session(&[ipv6], "Termius - developer@[2001:db8::1]:2222").is_ok());
+    }
+
     #[test]
     fn remote_directory_response_preserves_names_and_rejects_login_noise() {
         assert_eq!(

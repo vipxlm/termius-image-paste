@@ -22,6 +22,7 @@ const document = { getElementById: get, querySelector: () => main, querySelector
 let saved = null;
 let failLogin = false;
 const calls = [];
+let stateListener;
 const settings = { servers: [], activeServerId: null, shortcut: 'Ctrl+Shift+F12' };
 const invoke = async (command, args) => {
   calls.push({ command, args: structuredClone(args) });
@@ -36,7 +37,7 @@ const invoke = async (command, args) => {
   throw new Error(`unexpected command ${command}`);
 };
 vm.runInNewContext(fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8'), {
-  document, window: { __TAURI__: { core: { invoke }, event: { listen: async () => () => {} } }, addEventListener() {} },
+  document, window: { __TAURI__: { core: { invoke }, event: { listen: async (name, callback) => { if (name === 'app-state') stateListener = callback; return () => {}; } } }, addEventListener() {} },
   crypto: webcrypto, Intl, setTimeout: () => 1, clearTimeout() {}, console
 });
 const settle = async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); };
@@ -84,3 +85,13 @@ assert.equal(get('login-password').value, '');
 assert(get('editor-details').textContent.includes('[密码已隐藏]'), 'login error must be surfaced');
 assert(!get('editor-details').textContent.includes('failed-secret'), 'errors must redact password');
 console.log('服务器编辑器：指纹确认、密码清除与脱敏、默认目录、目录选择、密钥复用、主机变更与失败不保存，全部通过。');
+
+const another = { ...saved, id: 'another', name: 'Another', host: 'other.example.test' };
+settings.servers = [saved, another];
+stateListener({ payload: { settings, capabilities: { automaticInput: true, automaticTargetSelection: true }, runtime: { detectedTarget: { session: 'Termius - Another', serverId: another.id, message: '已跟随' } } } });
+assert.equal(get('current-name').textContent, 'Another', 'overview follows detected server instead of saved manual target');
+assert(get('current-endpoint').textContent.includes('other.example.test'));
+stateListener({ payload: { settings, capabilities: { automaticInput: true, automaticTargetSelection: true }, runtime: { detectedTarget: { session: 'Termius - unknown', serverId: null, message: '无法匹配' } } } });
+assert.equal(get('upload-file').disabled, true, 'unknown session cannot fall back to previous server');
+assert(get('home-notice').textContent.includes('无法匹配'));
+console.log('自动目标界面：目标跟随与无匹配时阻止上传，通过。');

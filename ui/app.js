@@ -46,7 +46,9 @@
   }
 
   function activeProfile() {
-    return state?.settings?.servers?.find(profile => profile.id === state.settings.activeServerId) || null;
+    const detected = state?.capabilities?.automaticTargetSelection ? state?.runtime?.detectedTarget : null;
+    const id = detected ? detected.serverId : state?.settings?.activeServerId;
+    return state?.settings?.servers?.find(profile => profile.id === id) || null;
   }
 
   function endpoint(profile) {
@@ -119,7 +121,7 @@
     document.querySelectorAll('[data-app-action]').forEach(button => { button.disabled = locked; });
     const active = activeProfile();
     $('check-active').disabled = locked || !active;
-    $('toggle-enabled').disabled = locked || !state?.settings || (!state.settings.enabled && !active);
+    $('toggle-enabled').disabled = locked || !state?.settings || (!state.settings.enabled && !state.settings.servers.length);
     $('upload-clipboard').disabled = locked || !active || !state?.capabilities?.clipboardAvailable;
     $('upload-file').disabled = locked || !active;
     $('copy-path').disabled = locked || !state?.runtime?.lastResult?.path;
@@ -170,7 +172,7 @@
       if (isRunning()) { label = '正在处理'; badgeClass = 'active'; }
       else if (!settings.enabled) label = '快捷键贴图已暂停';
       else if (!capabilities.automaticInput) { label = '手动上传模式'; badgeClass = 'warning'; }
-      else if (!activeProfile()) { label = '等待选择上传目标'; badgeClass = 'warning'; }
+      else if (!activeProfile()) { label = state?.runtime?.detectedTarget ? '当前会话尚未匹配' : '等待识别 Termius 会话'; badgeClass = 'warning'; }
       else if (shortcutMessage && /失败|冲突|占用|不可用|错误|error|unavailable|conflict|failed/i.test(shortcutMessage)) { label = '请检查快捷键'; badgeClass = 'warning'; }
       else { label = '快捷键贴图已启用'; badgeClass = 'active'; }
     }
@@ -179,6 +181,7 @@
     $('toggle-enabled').textContent = settings?.enabled ? '暂停贴图' : '启用贴图';
     $('shortcut-runtime').textContent = shortcutMessage || '快捷键注册结果由本地应用提供。';
     $('platform-label').textContent = connected ? `${capabilities.platform === 'windows' ? 'Windows' : capabilities.platform === 'linux' ? 'Linux' : capabilities.platform || '本机'}${capabilities.displayServer ? ` · ${capabilities.displayServer}` : ''}` : '未连接本地应用';
+    $('save-target-help').textContent = capabilities.automaticTargetSelection ? '登录成功后保存。切到名称对应的 Termius 标签页，即可自动选择服务器。' : '登录成功后保存。新服务器需在列表中设为当前目标。';
     $('footer-status').textContent = connected ? '配置与 SSH 操作均在本机处理，密码不保存。' : '预览不可连接，不会执行上传、授权或保存。';
   }
 
@@ -187,13 +190,15 @@
     $('current-name').textContent = profile?.name || '尚未选择服务器';
     $('current-endpoint').textContent = profile ? endpoint(profile) : '在“服务器”页面添加连接，并设为当前目标。';
     $('current-directory').textContent = profile?.remoteDirectory || '远程图片目录尚未配置';
-    if (!profile) notice('home-notice', '先添加服务器并登录。');
+    const detected = state?.capabilities?.automaticTargetSelection ? state?.runtime?.detectedTarget : null;
+    if (detected) notice('home-notice', `${detected.message}（${detected.session || '未读取到标签名'}）`, profile ? 'success' : 'error');
+    else if (!profile) notice('home-notice', state?.capabilities?.automaticTargetSelection ? '先添加服务器，再切到对应 Termius 标签页。会话名须与服务器名称或地址一致。' : '先添加服务器并登录。');
     else if (!profile.hostKey) notice('home-notice', '尚未信任此服务器的主机指纹。请编辑并核对后再上传。', 'error');
-    else if (!profile.keyFile) notice('home-notice', '请先选择 SSH 私钥或生成专用密钥，再测试连接。');
+    else if (!profile.keyFile) notice('home-notice', '请编辑服务器，选择密码或密钥登录。');
     else if (profile.verifiedAt) notice('home-notice', `上次验证成功：${formatTime(profile.verifiedAt)}。请确认 Termius 当前会话也连接此服务器。`, 'success');
     else notice('home-notice', '此配置尚未验证。请编辑服务器，登录并保存。');
     const automatic = Boolean(state?.capabilities?.automaticInput);
-    $('shortcut-help').textContent = automatic ? '保持当前会话和输入框，等路径出现后再发送。' : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
+    $('shortcut-help').textContent = automatic ? (state?.capabilities?.automaticTargetSelection ? '自动匹配当前 Termius 标签页。上传时保持该会话，等路径出现后再发送。' : '保持当前会话和输入框，等路径出现后再发送。') : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
     $('manual-input-note').textContent = automatic ? '窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。' : '当前环境使用手动上传模式。上传后可查看完整路径，需要时自行复制到 Termius。';
     $('manual-upload-help').textContent = state?.capabilities?.clipboardAvailable ? '也可以在此窗口按 Ctrl + V，或使用下面的按钮。' : '可在此窗口按 Ctrl + V 粘贴图片，或选择本机图片文件。';
   }
@@ -209,7 +214,7 @@
   }
 
   function renderServers() {
-    const signature = JSON.stringify([connected, state?.settings?.activeServerId, state?.settings?.servers]);
+    const signature = JSON.stringify([connected, activeProfile()?.id, state?.settings?.servers]);
     if (signature === serverListSignature) return;
     serverListSignature = signature;
     const list = $('server-list');
@@ -237,10 +242,10 @@
       info.append(title, address, validation);
       const actions = document.createElement('div');
       actions.className = 'server-actions';
-      if (profile.id === state.settings.activeServerId) {
+      if (profile.id === activeProfile()?.id) {
         const badge = document.createElement('span');
         badge.className = 'badge';
-        badge.textContent = '当前目标';
+        badge.textContent = state?.runtime?.detectedTarget && state?.capabilities?.automaticTargetSelection ? '自动跟随' : '当前目标';
         actions.append(badge);
       } else actions.append(actionButton('设为当前目标', () => setActive(profile)));
       actions.append(actionButton('编辑服务器', () => openEditor(profile)));

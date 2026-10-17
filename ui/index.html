@@ -62,10 +62,10 @@
             </div>
           </section>
           <section class="section instructions-section" aria-labelledby="instructions-title"><h2 id="instructions-title">在 Termius 中贴图</h2><ol class="instructions"><li><h3>截取图片</h3><p>使用系统截图工具，将图片放入剪贴板。</p></li><li><h3>点击消息输入框</h3><p>确认该会话连接的就是上方服务器。</p></li><li><h3>按贴图快捷键</h3><div class="shortcut" id="home-shortcut">尚未读取</div><p id="shortcut-help">保持当前会话，等待路径出现后再发送。</p></li></ol></section>
-          <p class="footnote">上传期间离开 Termius，会停止自动输入。软件无法识别同一窗口里的标签页或输入框切换。自动操作不会覆盖截图，也不会按回车。</p>
+          <p class="footnote">上传期间离开 Termius，会停止自动输入。Windows 按标签名自动匹配服务器，切换标签会停止自动填入；分屏和同名标签无法区分，请使用名称唯一的独立服务器标签。Linux 仍需手动选目标。自动操作不会覆盖截图，也不会按回车。</p>
         </section>
         <section class="page" id="page-servers" aria-labelledby="servers-title" hidden>
-          <div class="heading"><div><h1 id="servers-title" tabindex="-1">服务器</h1><p class="muted">保存连接，再明确选择当前上传目标。</p></div><button type="button" class="primary" id="add-server" data-app-action disabled>添加服务器</button></div>
+          <div class="heading"><div><h1 id="servers-title" tabindex="-1">服务器</h1><p class="muted">Windows 自动跟随 Termius 标签页；Linux 手动选择上传目标。</p></div><button type="button" class="primary" id="add-server" data-app-action disabled>添加服务器</button></div>
           <div class="notice error" id="servers-error" role="alert" hidden></div>
           <div class="server-list" id="server-list"><p class="empty muted">正在读取服务器配置。</p></div>
           <section class="editor" id="editor" aria-labelledby="editor-title" hidden>
@@ -73,7 +73,7 @@
             <p class="hint" id="active-editor-note" hidden>这是当前上传目标。保存后，修改会用于下一次上传。</p>
             <form id="server-form" novalidate>
               <fieldset id="server-fields"><legend class="sr-only">服务器连接信息</legend><div class="form-grid">
-                <div class="field wide"><label for="server-name">名称（选填）</label><input id="server-name" name="name" maxlength="128" autocomplete="off" placeholder="默认使用主机地址"><span class="field-error" id="name-error" hidden></span></div>
+                <div class="field wide"><label for="server-name">名称（选填）</label><input id="server-name" name="name" maxlength="128" autocomplete="off" placeholder="默认使用主机地址"><p class="hint">Windows 自动跟随时，名称与 Termius 标签名一致。标签名就是地址时可留空。</p><span class="field-error" id="name-error" hidden></span></div>
                 <div class="field"><label for="server-host">主机地址</label><input id="server-host" name="host" autocomplete="off" spellcheck="false" placeholder="主机名、IPv4 或 IPv6" required><span class="field-error" id="host-error" hidden></span></div>
                 <div class="field port-field"><label for="server-port">SSH 端口</label><input id="server-port" name="port" inputmode="numeric" maxlength="5" autocomplete="off" value="22" required><span class="field-error" id="port-error" hidden></span></div>
                 <div class="field wide"><label for="server-username">Linux 用户名</label><input id="server-username" name="username" autocomplete="off" spellcheck="false" placeholder="例如：user" required><span class="field-error" id="username-error" hidden></span></div>
@@ -88,7 +88,7 @@
               <div class="notice" id="editor-status" role="status" hidden></div>
               <details id="editor-details-section" hidden><summary>查看详细信息</summary><pre id="editor-details"></pre></details>
               <div class="actions"><button type="button" id="cancel-edit">取消编辑</button><button type="submit" id="save-server" class="primary" data-app-action disabled>登录并保存</button></div>
-              <p class="hint">登录成功后保存。新服务器需在列表中设为当前目标。</p>
+              <p class="hint" id="save-target-help">登录成功后保存。Windows 按 Termius 标签名自动选择对应服务器。</p>
             </form>
           </section>
           <p class="footnote">每台服务器独立核对身份。删除本地配置不会删除服务器上的图片、SSH 密钥或已有授权。</p>
