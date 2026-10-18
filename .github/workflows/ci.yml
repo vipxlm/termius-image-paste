@@ -51,6 +51,8 @@ jobs:
           node --check ui/app.js
           node --check tools/check-version.mjs
           node --check tools/third-party-notices.mjs
+          node tools/test-server-editor.mjs
+          node --test tools/test-termius-connection-probe.mjs
           cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - name: Windows 测试
         if: runner.os == 'Windows'

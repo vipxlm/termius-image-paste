@@ -54,6 +54,8 @@ jobs:
           node --check ui/app.js
           node --check tools/check-version.mjs
           node --check tools/third-party-notices.mjs
+          node tools/test-server-editor.mjs
+          node --test tools/test-termius-connection-probe.mjs
           cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - name: Windows 测试
         if: runner.os == 'Windows'
@@ -139,6 +141,10 @@ jobs:
             exit 1
           fi
           cat > release-notes.md <<'NOTES'
+          本次更新：简化服务器配置，支持密码或密钥登录、默认图片目录和远端目录选择；Windows 根据 Termius 焦点终端真实连接自动匹配服务器，不依赖标签名。
+
+          Windows 自动识别当前仅适配已核验的 Termius 10.2.1 安装包，需要手动开启本机回环调试接口。终端内再次 SSH 到其他机器暂不支持。使用前请查看 README 和连接识别说明。
+
           Windows x64：下载 exe 直接运行，或下载 ZIP 解压后双击程序。需要系统 WebView2 和 OpenSSH 客户端。程序尚未进行代码签名。
 
           Ubuntu 24.04+ x64：优先安装 .deb；tar.gz 保留程序执行权限，解压后仍需对应系统运行库。单独 ELF 下载后需 chmod +x。
