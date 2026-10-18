@@ -20,9 +20,9 @@
 
 发布资产附带 `SHA256SUMS.txt`。Windows 程序尚未代码签名；未提供 macOS 或 ARM 安装包，Linux 不保证兼容所有发行版。
 
-> **正式版与当前源码不同。** 截至 2026-10-18，最新正式版为 [v2.0.0](https://github.com/vipxlm/termius-image-paste/releases/tag/v2.0.0)。下文介绍的简化登录、远端目录选择及 Windows 真实连接自动识别已经合并到 `main`，尚未发布到 Releases。体验这些功能需要从当前源码构建；旧版下载包不会随 README 更新而升级。
+> **版本差异：** 简化登录、远端目录选择及 Windows 真实连接自动识别从 `v2.1.0` 引入。旧版 `v2.0.0` 不包含这些功能；请在 Releases 中确认下载包版本。Windows 自动识别另有 Termius 版本和本机调试接口要求，见下文。
 
-## 当前源码的使用方式
+## 使用方式
 
 ### 1. 添加服务器
 
