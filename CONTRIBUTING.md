@@ -18,6 +18,8 @@ Rust 版本由 `rust-toolchain.toml` 固定，依赖由两个锁文件固定。�
 ```sh
 node --check ui/app.js
 node tools/check-version.mjs
+node tools/test-server-editor.mjs
+node --test tools/test-termius-connection-probe.mjs
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
@@ -27,7 +29,7 @@ Linux 上可用 `xvfb-run -a cargo test --locked --manifest-path src-tauri/Cargo
 ## 改动边界
 
 - 截图剪贴板保留，自动输入不按回车；跨窗口、取消和设置变化应使待输入结果失效。
-- 保存服务器与切换当前目标分别操作；不要隐式改投另一台服务器。
+- Windows 只按焦点终端真实连接唯一匹配已保存服务器，不使用标签名或旧目标回退；Linux 保持手动选择。编辑中的连接不能冒充已保存配置。
 - 正式 SSH 连接严格验证已确认的主机身份。改地址、端口或主机密钥后必须重新核对。
 - Wayland 首版使用窗口内上传与手动取路径；能力受限时明确提示，不显示模拟成功。
 - 构建与测试成功不代表真实 Termius、具体输入法或桌面权限已验收。涉及这些行为的 PR 请注明实际测试环境。

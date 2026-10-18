@@ -1,6 +1,19 @@
 # Termius 焦点终端真实连接识别
 
-确认日期：2026-10-18。Windows 应用已接入真实连接读取，删除标签匹配逻辑。用户已批准本次短时本机调试验证，并手动启动 Termius 的回环调试接口；没有修改安装包、永久启动配置或远端服务器。
+本文对应 `main` 当前源码，尚未包含在正式版 v2.0.0 中。Windows 自动识别读取 Termius 管理的连接，不依赖标签名；兼容范围于 2026-10-18 核验。
+
+## 使用前准备
+
+1. 确认 Termius 为已适配的 10.2.1 安装包，其他构建会因指纹不同而拒绝识别。
+2. 保存必要工作，完全退出 Termius。重启会影响现有 SSH 会话。
+3. 使用下方示例在本机回环地址启动调试接口，然后重新连接服务器。若安装位置不同，请调整路径；端口需要空闲。
+4. 在助手中保存相同主机地址、端口、用户名的配置，回到 Termius 点击终端输入区域。名称可以任意填写。
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Termius\Termius.exe" --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1
+```
+
+识别失败时不会切回旧服务器。终端内再次 SSH 不属于此机制的识别范围，见文末说明。
 
 ## 读取路径与约束
 
@@ -16,13 +29,13 @@
 
 ## 调试接口的生命周期
 
-当前方案依赖 Termius 已启动的本机 Chromium 调试接口。用户本次手动启用的端口为 9223；应用按进程动态发现回环端口，不把该端口写入配置。启动参数示例：
+当前方案依赖 Termius 已启动的本机 Chromium 调试接口。示例使用端口 9223；应用按进程动态发现回环端口，不将端口固定在配置中。启动参数为：
 
 ```text
 --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1
 ```
 
-启用前应确认端口空闲；应用只连接 Termius 所属的 127.0.0.1 监听端口。调试接口权限高于此读取器，仅用于本次获批验证。正常退出并不带调试参数重新启动 Termius 可关闭接口，此后自动识别会停止；应用不会自行重启 Termius 或永久开启接口。
+启用前应确认端口空闲；应用只连接 Termius 所属的 127.0.0.1 监听端口。调试接口权限高于此读取器，仅在需要且信任本机环境时启用，不向局域网开放。正常退出并不带调试参数重新启动 Termius 可关闭接口，此后自动识别会停止；应用不会自行重启 Termius 或永久开启接口。
 
 ## 验证证据
 
@@ -42,6 +55,6 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 Termius 管理的外层 SSH 到 A，不等于 A 内再 SSH 到 B 后的最内层 shell。当前连接快照只能得到 Termius 管理的连接，不能证明最内层为 B。
 
-自动跟随最内层需要远端配合并与终端通道绑定的可验证机器身份和 shell 生命周期。仅解析命令、提示符、标题或一次 hostname 不足以可靠识别多层连接。远端安装、shell 配置及新通信格式属于另外的改动范围，本次未实施。
+自动跟随最内层需要远端配合并与终端通道绑定的可验证机器身份和 shell 生命周期。仅解析命令、提示符、标题或一次 hostname 不足以可靠识别多层连接。这需要另行设计并部署远端集成，当前版本未提供。
 
 原生通道使用 [Microsoft WinHTTP WebSocket API](https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketreceive)。WebSocket 句柄不接受普通 RECEIVE_TIMEOUT 选项，使用有界协议关闭取消等待；原生句柄保留至关闭线程结束。
