@@ -1,56 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { pathToFileURL } from 'node:url';
 
 // This function is serialized into a fixed, read-only renderer expression.
 // Never serialize a host, identity, store, mediator, or React props object.
-export function readFocusedConnection(doc = document) {
-  if (!doc.hasFocus()) return { status: 'not-focused' };
-  const focused = doc.activeElement;
-  if (!focused?.closest?.('.xterm')) return { status: 'terminal-not-focused' };
-  const mediators = new Set();
-  const stores = new Set();
-  const visited = new Set();
-  let budget = 512;
-  for (let element = focused; element && budget > 0; element = element.parentElement) {
-    const key = Object.getOwnPropertyNames(element).find(name => name.startsWith('__reactFiber$'));
-    for (let fiber = key ? element[key] : null; fiber && !visited.has(fiber) && budget > 0; fiber = fiber.return) {
-      visited.add(fiber); budget--;
-      const props = fiber.memoizedProps;
-      if (!props || typeof props !== 'object') continue;
-      if (props.mediator?.terminalApi && props.mediator.currentConnection) mediators.add(props.mediator);
-      const store = props.store || props.value?.store;
-      if (typeof store?.getState === 'function') stores.add(store);
-    }
-  }
-  if (budget <= 0) return { status: 'inspection-limit' };
-  if (mediators.size !== 1) return { status: mediators.size ? 'ambiguous-terminal' : 'terminal-adapter-unavailable' };
-  const mediator = [...mediators][0];
-  const connection = mediator.currentConnection;
-  if (!mediator.isShellReady) return { status: 'shell-not-ready' };
-  if (!['ssh', 'mosh'].includes(connection.protocol)) return { status: 'unsupported-protocol' };
-  // Broadcast input must never be treated as one uniquely addressed terminal.
-  let broadcastChecked = false;
-  for (const store of stores) {
-    const terminal = store.getState()?.terminal;
-    const broadcasts = terminal?.splitViewBroadcastTabs;
-    if (broadcasts && typeof broadcasts.size === 'number') {
-      broadcastChecked = true;
-      if (broadcasts.size !== 0) return { status: 'broadcast-active' };
-    }
-  }
-  const singleLine = (value, limit) => typeof value === 'string' && value.length > 0 && value.length <= limit && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
-  const host = connection.host?.address;
-  const port = connection.port;
-  const username = connection.username;
-  const terminalId = mediator.terminalApi.id;
-  const connectionId = connection.id;
-  if (!singleLine(host, 255) || !singleLine(username, 256) || !singleLine(terminalId, 256) || !singleLine(connectionId, 256)
-      || !Number.isInteger(port) || port < 1 || port > 65535) return { status: 'incomplete-connection' };
-  return {
-    status: 'connection-found', source: 'focused-terminal-connection',
-    terminalId, connectionId, protocol: connection.protocol, host, port, username,
-    broadcastChecked, scope: 'termius-managed-connection'
-  };
-}
+export const readFocusedConnection = runInNewContext('(' + readFileSync(new URL('../src-tauri/src/termius-connection-probe.js', import.meta.url), 'utf8') + ')');
 
 export function validateEndpoint(input) {
   const endpoint = new URL(input);

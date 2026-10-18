@@ -1,5 +1,6 @@
 mod core;
 mod platform;
+mod termius;
 
 use core::{AppError, AppResult, ServerProfile, Settings, SettingsStore, SshClient};
 use serde::Serialize;
@@ -514,6 +515,13 @@ fn start_upload(
     source: ImageSource,
     target: Option<platform::Target>,
 ) -> AppResult<()> {
+    let target = match target {
+        Some(mut target) if cfg!(windows) => {
+            target.terminal = Some(termius::capture(target.process)?);
+            Some(target)
+        }
+        other => other,
+    };
     let s = state(&app);
     let (profile, generation) = {
         let settings = s.settings.lock().unwrap();
@@ -522,17 +530,18 @@ fn start_upload(
         }
         let p = if platform::capabilities().automatic_target_selection {
             if let Some(target) = &target {
-                // Read again at the actual hotkey boundary, not from the polling cache.
-                core::server_for_session(
+                core::server_for_connection(
                     &settings.servers,
-                    target.session_title.as_deref().unwrap_or(""),
+                    target.terminal.as_ref().ok_or_else(|| {
+                        AppError::new("connection_unavailable", "无法读取当前 Termius 真实连接。")
+                    })?,
                 )?
             } else if let Some(detected) = &s.runtime.lock().unwrap().detected_target {
                 settings
                     .servers
                     .iter()
                     .find(|p| Some(&p.id) == detected.server_id.as_ref())
-                    .ok_or_else(|| AppError::new("session_unmatched", &detected.message))?
+                    .ok_or_else(|| AppError::new("connection_unmatched", &detected.message))?
             } else {
                 settings.active_server().ok_or_else(|| {
                     AppError::new("no_target", "请先打开已配置服务器的 Termius 会话。")
@@ -562,6 +571,16 @@ fn start_upload(
                     .map_err(|e| error("image_prepare", "读取图片失败。", e))??;
             if job.token.is_cancelled() {
                 return Err(AppError::new("cancelled", "操作已取消。"));
+            }
+            if s.generation.load(Ordering::SeqCst) != generation
+                || target
+                    .as_ref()
+                    .is_some_and(|target| !platform::target_unchanged(target))
+            {
+                return Err(AppError::new(
+                    "target_changed",
+                    "当前连接或设置已变化，已停止上传，请重新触发贴图。",
+                ));
             }
             stage(&app, &job, "正在上传图片…", "upload");
             let remote = s
@@ -753,17 +772,24 @@ fn observe_target(app: &AppHandle) {
     let Some(target) = platform::capture_target() else {
         return;
     };
+    let connection = termius::capture(target.process);
     let s = state(app);
     let settings = s.settings.lock().unwrap();
-    let title = target.session_title.as_deref().unwrap_or("");
-    let detected = match core::server_for_session(&settings.servers, title) {
-        Ok(server) => DetectedTarget {
-            session: title.into(),
-            server_id: Some(server.id.clone()),
-            message: format!("已跟随当前 Termius 会话：{}", server.name),
+    let detected = match connection {
+        Ok(connection) => match core::server_for_connection(&settings.servers, &connection) {
+            Ok(server) => DetectedTarget {
+                session: connection.endpoint(),
+                server_id: Some(server.id.clone()),
+                message: format!("已识别当前真实连接：{}", server.name),
+            },
+            Err(error) => DetectedTarget {
+                session: connection.endpoint(),
+                server_id: None,
+                message: error.message,
+            },
         },
         Err(error) => DetectedTarget {
-            session: title.into(),
+            session: String::new(),
             server_id: None,
             message: error.message,
         },

@@ -1012,42 +1012,35 @@ fn parse_remote_directories(output: &str) -> AppResult<Vec<String>> {
     Ok(paths)
 }
 
-/// Match only exact saved aliases/endpoints; never guess from terminal output.
-pub fn server_for_session<'a>(
+/// Match the endpoint reported by Termius; display names are irrelevant.
+pub fn server_for_connection<'a>(
     servers: &'a [ServerProfile],
-    window_title: &str,
+    connection: &crate::termius::Connection,
 ) -> AppResult<&'a ServerProfile> {
-    let session = window_title
-        .strip_prefix("Termius - ")
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !has_control(s))
-        .ok_or_else(|| {
-            AppError::new(
-                "session_unavailable",
-                "无法识别当前 Termius 会话，请打开对应服务器的独立标签页。",
-            )
-        })?;
+    let normalize = |host: &str| {
+        host.trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|_| host.trim().trim_end_matches('.').to_ascii_lowercase())
+    };
+    let host = normalize(&connection.host);
     let mut matches = servers.iter().filter(|server| {
-        let host = if server.host.contains(':') {
-            format!("[{}]", server.host)
-        } else {
-            server.host.clone()
-        };
-        [
-            server.name.clone(),
-            server.host.clone(),
-            format!("{host}:{}", server.port),
-            format!("{}@{host}", server.username),
-            format!("{}@{host}:{}", server.username, server.port),
-        ]
-        .iter()
-        .any(|alias| alias.trim().eq_ignore_ascii_case(session))
+        normalize(&server.host) == host
+            && server.port == connection.port
+            && server.username == connection.username
     });
-    let matched = matches.next().ok_or_else(|| AppError::new("session_unmatched", "当前会话没有对应的服务器。请把已保存服务器名称设为 Termius 标签名，或让标签名使用连接地址。"))?;
+    let matched = matches.next().ok_or_else(|| {
+        AppError::new(
+            "connection_unmatched",
+            "当前真实连接尚未配置。请添加相同主机地址、端口和用户名的服务器。",
+        )
+    })?;
     if matches.next().is_some() {
         return Err(AppError::new(
-            "session_ambiguous",
-            "当前会话对应多台服务器，请使用唯一的服务器名称和 Termius 标签名。",
+            "connection_ambiguous",
+            "同一连接配置了多台服务器，请保留唯一的主机、端口和用户名组合。",
         ));
     }
     Ok(matched)
@@ -1578,64 +1571,45 @@ mod tests {
         }
     }
     #[test]
-    fn session_target_requires_an_exact_unique_alias() {
+    fn real_connection_selection_ignores_labels_and_requires_unique_full_endpoint() {
         let directory = tempfile::tempdir().unwrap();
-        let mut first = profile(directory.path());
-        first.name = "开发机".into();
-        first.host = "192.0.2.10".into();
-        first.username = "developer".into();
-        first.port = 2222;
-        let mut second = first.clone();
-        second.id = "another-server".into();
-        second.name = "生产机".into();
-        second.host = "192.0.2.100".into();
-        let servers = vec![first.clone(), second];
-        for title in [
-            "Termius - 开发机",
-            "Termius - 192.0.2.10",
-            "Termius - developer@192.0.2.10:2222",
-        ] {
-            assert_eq!(server_for_session(&servers, title).unwrap().id, first.id);
+        let mut p = profile(directory.path());
+        p.name = "arbitrary label".into();
+        p.host = "192.0.2.10".into();
+        p.username = "user".into();
+        p.port = 2222;
+        let connection = crate::termius::Connection {
+            terminal_id: "terminal".into(),
+            connection_id: "connection".into(),
+            protocol: "ssh".into(),
+            host: p.host.clone(),
+            port: p.port,
+            username: p.username.clone(),
+            target_id: "page".into(),
+        };
+        assert!(server_for_connection(&[p.clone()], &connection).is_ok());
+        for change in 0..3 {
+            let mut wrong = p.clone();
+            match change {
+                0 => wrong.host = "192.0.2.100".into(),
+                1 => wrong.port = 22,
+                _ => wrong.username = "other".into(),
+            }
+            assert!(server_for_connection(&[wrong], &connection).is_err());
         }
-        for title in [
-            "Termius - 192.0.2.1",
-            "Termius - 开发",
-            "Termius - 开发机 extra",
-        ] {
-            assert_eq!(
-                server_for_session(&servers, title).unwrap_err().code,
-                "session_unmatched"
-            );
-        }
-        for title in [
-            "Termius",
-            "Another - 开发机",
-            "Termius - ",
-            "Termius - bad\nname",
-        ] {
-            assert_eq!(
-                server_for_session(&servers, title).unwrap_err().code,
-                "session_unavailable"
-            );
-        }
-        let mut duplicate = first.clone();
-        duplicate.username = "other".into();
-        let duplicate_servers = vec![first, duplicate];
         assert_eq!(
-            server_for_session(&duplicate_servers, "Termius - 开发机")
+            server_for_connection(&[p.clone(), p.clone()], &connection)
                 .unwrap_err()
                 .code,
-            "session_ambiguous"
+            "connection_ambiguous"
         );
-        assert_eq!(
-            server_for_session(&duplicate_servers, "Termius - developer@192.0.2.10:2222")
-                .unwrap()
-                .username,
-            "developer"
-        );
-        let mut ipv6 = duplicate_servers[0].clone();
-        ipv6.host = "2001:db8::1".into();
-        assert!(server_for_session(&[ipv6], "Termius - developer@[2001:db8::1]:2222").is_ok());
+        p.host = "EXAMPLE.test.".into();
+        let mut dns = connection.clone();
+        dns.host = "example.test".into();
+        assert!(server_for_connection(&[p.clone()], &dns).is_ok());
+        p.host = "2001:db8::1".into();
+        dns.host = "[2001:0db8::1]".into();
+        assert!(server_for_connection(&[p], &dns).is_ok());
     }
 
     #[test]

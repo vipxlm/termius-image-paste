@@ -5,13 +5,13 @@ import { readFocusedConnection, validateEndpoint, validateSocket, projectObserva
 const endpoint = validateEndpoint('http://127.0.0.1:9222/');
 const socketUrl = 'ws://127.0.0.1:9222/devtools/page/ABC-123';
 function fixture({ host = '192.0.2.10', id = 'one', ready = true, focused = true, broadcast = false, props = {} } = {}) {
-  const connection = { id: `connection-${id}`, protocol: 'ssh', host: { address: host }, get port() { return 2222; }, get username() { return 'tester'; } };
+  const connection = { id: `connection-${id}`, protocol: 'ssh', host: { address: host, ssh_config: { port: 2222, identity: { username: 'tester' } }, group: null }, get port() { throw new Error('must not call merged getter'); }, get username() { throw new Error('must not call merged getter'); } };
   for (const name of ['password', 'identity', 'privateKey']) Object.defineProperty(connection, name, { get() { throw new Error(`must not read ${name}`); } });
   const mediator = { terminalApi: { id }, currentConnection: connection, isShellReady: ready };
   const store = { getState: () => ({ terminal: { splitViewBroadcastTabs: new Set(broadcast ? ['workspace'] : []) } }) };
   const fiber = { memoizedProps: { mediator, ...props }, return: { memoizedProps: { value: { store } }, return: null } };
-  const parent = { '__reactFiber$fixture': fiber, parentElement: null };
-  const activeElement = { closest: selector => selector === '.xterm' ? {} : null, parentElement: parent };
+  const parent = { '__reactFiber$fixture': fiber, className: 'xterm focused', parentElement: null };
+  const activeElement = { className: 'xterm-helper-textarea', parentElement: parent, closest() { throw new Error('must not call DOM closest'); } };
   return { doc: { hasFocus: () => focused, activeElement }, mediator, connection, fiber };
 }
 
@@ -33,7 +33,7 @@ test('duplicate arbitrary titles do not affect focused pane selection', () => {
 });
 test('rejects missing focus, unavailable connection, broadcast, and conflicting mediators', () => {
   assert.equal(readFocusedConnection(fixture({ focused: false }).doc).status, 'not-focused');
-  const missing = fixture(); missing.doc.activeElement.closest = () => null;
+  const missing = fixture(); missing.doc.activeElement.parentElement = null;
   assert.equal(readFocusedConnection(missing.doc).status, 'terminal-not-focused');
   assert.equal(readFocusedConnection(fixture({ ready: false }).doc).status, 'shell-not-ready');
   assert.equal(readFocusedConnection(fixture({ broadcast: true }).doc).status, 'broadcast-active');
@@ -83,4 +83,34 @@ test('checks all UI windows and refuses ambiguous focused windows', async () => 
   assert.equal((await inspectOnce(endpoint, fetcher, FakeSocket)).status, 'connection-found');
   FakeSocket.replies = inventory.map(() => reply(readFocusedConnection(fixture().doc)));
   assert.equal((await inspectOnce(endpoint, fetcher, FakeSocket)).status, 'ambiguous-window');
+});
+
+
+test('resolves group endpoint inheritance, defaults and temporary SSH identities without credentials', () => {
+  const f = fixture();
+  f.connection.host.ssh_config = {};
+  f.connection.host.group = { ssh_config: { port: 2200 }, parent_group: { ssh_config: { identity: { username: 'group-user' } } } };
+  assert.equal(readFocusedConnection(f.doc).port, 2200);
+  assert.equal(readFocusedConnection(f.doc).username, 'group-user');
+  f.connection.host.group = null;
+  f.connection.perHostSSHidContexts = { 'addr:192.0.2.10:22': { username: 'temporary-user' } };
+  assert.equal(readFocusedConnection(f.doc).port, 22);
+  assert.equal(readFocusedConnection(f.doc).username, 'temporary-user');
+  f.connection.host.local_id = 123;
+  f.connection.perHostSSHidContexts = { 'id:123': { username: 'local-user' } };
+  assert.equal(readFocusedConnection(f.doc).username, 'local-user');
+});
+test('refuses private empty identities, cyclic groups and invalid ports', () => {
+  const f = fixture();
+  f.connection.host.ssh_config.identity = { username: '', is_visible: false };
+  assert.equal(readFocusedConnection(f.doc).status, 'incomplete-connection');
+  f.connection.host.ssh_config.identity = { username: 'user' };
+  f.connection.host.group = { ssh_config: {}, parent_group: null };
+  f.connection.host.group.parent_group = f.connection.host.group;
+  assert.equal(readFocusedConnection(f.doc).status, 'incomplete-connection');
+  f.connection.host.group = null;
+  for (const port of [0, 65536, '22', 2.5]) {
+    f.connection.host.ssh_config.port = port;
+    assert.equal(readFocusedConnection(f.doc).status, 'incomplete-connection');
+  }
 });

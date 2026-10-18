@@ -181,7 +181,7 @@
     $('toggle-enabled').textContent = settings?.enabled ? '暂停贴图' : '启用贴图';
     $('shortcut-runtime').textContent = shortcutMessage || '快捷键注册结果由本地应用提供。';
     $('platform-label').textContent = connected ? `${capabilities.platform === 'windows' ? 'Windows' : capabilities.platform === 'linux' ? 'Linux' : capabilities.platform || '本机'}${capabilities.displayServer ? ` · ${capabilities.displayServer}` : ''}` : '未连接本地应用';
-    $('save-target-help').textContent = capabilities.automaticTargetSelection ? '登录成功后保存。切到名称对应的 Termius 标签页，即可自动选择服务器。' : '登录成功后保存。新服务器需在列表中设为当前目标。';
+    $('save-target-help').textContent = capabilities.automaticTargetSelection ? '登录成功后保存。切到对应的 Termius 终端，即可按真实连接自动选择服务器。' : '登录成功后保存。新服务器需在列表中设为当前目标。';
     $('footer-status').textContent = connected ? '配置与 SSH 操作均在本机处理，密码不保存。' : '预览不可连接，不会执行上传、授权或保存。';
   }
 
@@ -191,14 +191,14 @@
     $('current-endpoint').textContent = profile ? endpoint(profile) : '在“服务器”页面添加连接，并设为当前目标。';
     $('current-directory').textContent = profile?.remoteDirectory || '远程图片目录尚未配置';
     const detected = state?.capabilities?.automaticTargetSelection ? state?.runtime?.detectedTarget : null;
-    if (detected) notice('home-notice', `${detected.message}（${detected.session || '未读取到标签名'}）`, profile ? 'success' : 'error');
-    else if (!profile) notice('home-notice', state?.capabilities?.automaticTargetSelection ? '先添加服务器，再切到对应 Termius 标签页。会话名须与服务器名称或地址一致。' : '先添加服务器并登录。');
+    if (detected) notice('home-notice', `${detected.message}（${detected.session || '未读取到真实连接'}）`, profile ? 'success' : 'error');
+    else if (!profile) notice('home-notice', state?.capabilities?.automaticTargetSelection ? '先添加服务器并登录，再点击对应 Termius 终端。按地址、端口和用户名识别，与标签名称无关。' : '先添加服务器并登录。');
     else if (!profile.hostKey) notice('home-notice', '尚未信任此服务器的主机指纹。请编辑并核对后再上传。', 'error');
     else if (!profile.keyFile) notice('home-notice', '请编辑服务器，选择密码或密钥登录。');
     else if (profile.verifiedAt) notice('home-notice', `上次验证成功：${formatTime(profile.verifiedAt)}。请确认 Termius 当前会话也连接此服务器。`, 'success');
     else notice('home-notice', '此配置尚未验证。请编辑服务器，登录并保存。');
     const automatic = Boolean(state?.capabilities?.automaticInput);
-    $('shortcut-help').textContent = automatic ? (state?.capabilities?.automaticTargetSelection ? '自动匹配当前 Termius 标签页。上传时保持该会话，等路径出现后再发送。' : '保持当前会话和输入框，等路径出现后再发送。') : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
+    $('shortcut-help').textContent = automatic ? (state?.capabilities?.automaticTargetSelection ? '自动识别当前 Termius 终端的真实连接。上传时保持该会话，等路径出现后再发送。' : '保持当前会话和输入框，等路径出现后再发送。') : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
     $('manual-input-note').textContent = automatic ? '窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。' : '当前环境使用手动上传模式。上传后可查看完整路径，需要时自行复制到 Termius。';
     $('manual-upload-help').textContent = state?.capabilities?.clipboardAvailable ? '也可以在此窗口按 Ctrl + V，或使用下面的按钮。' : '可在此窗口按 Ctrl + V 粘贴图片，或选择本机图片文件。';
   }

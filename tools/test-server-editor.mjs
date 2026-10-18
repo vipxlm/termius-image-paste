@@ -88,10 +88,10 @@ console.log('服务器编辑器：指纹确认、密码清除与脱敏、默认�
 
 const another = { ...saved, id: 'another', name: 'Another', host: 'other.example.test' };
 settings.servers = [saved, another];
-stateListener({ payload: { settings, capabilities: { automaticInput: true, automaticTargetSelection: true }, runtime: { detectedTarget: { session: 'Termius - Another', serverId: another.id, message: '已跟随' } } } });
+stateListener({ payload: { settings, capabilities: { automaticInput: true, automaticTargetSelection: true }, runtime: { detectedTarget: { session: 'user@192.0.2.20:22', serverId: another.id, message: '已跟随' } } } });
 assert.equal(get('current-name').textContent, 'Another', 'overview follows detected server instead of saved manual target');
 assert(get('current-endpoint').textContent.includes('other.example.test'));
-stateListener({ payload: { settings, capabilities: { automaticInput: true, automaticTargetSelection: true }, runtime: { detectedTarget: { session: 'Termius - unknown', serverId: null, message: '无法匹配' } } } });
+stateListener({ payload: { settings, capabilities: { automaticInput: true, automaticTargetSelection: true }, runtime: { detectedTarget: { session: 'user@192.0.2.30:22', serverId: null, message: '无法匹配' } } } });
 assert.equal(get('upload-file').disabled, true, 'unknown session cannot fall back to previous server');
 assert(get('home-notice').textContent.includes('无法匹配'));
 console.log('自动目标界面：目标跟随与无匹配时阻止上传，通过。');
