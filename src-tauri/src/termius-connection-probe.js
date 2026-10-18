@@ -78,4 +78,3 @@ function readFocusedConnection(doc = document) {
     broadcastChecked, scope: 'termius-managed-connection'
   };
 }
-
