@@ -11,6 +11,9 @@
   let editorProfile = null;
   let editorDirty = false;
   let trustCandidate = null;
+  let useDefaultDirectory = true;
+  let browsePath = null;
+  let pendingLogin = false;
   let preferencesDraft = null;
   let preferencesDirty = false;
   let capturingShortcut = false;
@@ -43,7 +46,9 @@
   }
 
   function activeProfile() {
-    return state?.settings?.servers?.find(profile => profile.id === state.settings.activeServerId) || null;
+    const detected = state?.capabilities?.automaticTargetSelection ? state?.runtime?.detectedTarget : null;
+    const id = detected ? detected.serverId : state?.settings?.activeServerId;
+    return state?.settings?.servers?.find(profile => profile.id === id) || null;
   }
 
   function endpoint(profile) {
@@ -116,7 +121,7 @@
     document.querySelectorAll('[data-app-action]').forEach(button => { button.disabled = locked; });
     const active = activeProfile();
     $('check-active').disabled = locked || !active;
-    $('toggle-enabled').disabled = locked || !state?.settings || (!state.settings.enabled && !active);
+    $('toggle-enabled').disabled = locked || !state?.settings || (!state.settings.enabled && !state.settings.servers.length);
     $('upload-clipboard').disabled = locked || !active || !state?.capabilities?.clipboardAvailable;
     $('upload-file').disabled = locked || !active;
     $('copy-path').disabled = locked || !state?.runtime?.lastResult?.path;
@@ -129,10 +134,9 @@
     const operation = state?.runtime?.operation;
     $('cancel-operation').disabled = !connected || !isRunning() || operation?.cancellable === false;
     if (editorProfile) {
-      const profile = readProfile();
-      $('confirm-fingerprint').disabled = locked || !trustCandidate || trustCandidate.endpoint !== endpointIdentity(profile);
-      $('open-authorization').disabled = locked || !profile.hostKey || !profile.keyFile;
-      $('test-server').disabled = locked || !profile.hostKey || !profile.keyFile;
+      $('confirm-fingerprint').disabled = locked || !trustCandidate;
+      $('browse-directory').disabled = locked || !editorProfile.verifiedAt;
+      $('use-default-directory').disabled = uiBusy || isRunning();
     }
   }
 
@@ -168,7 +172,7 @@
       if (isRunning()) { label = '正在处理'; badgeClass = 'active'; }
       else if (!settings.enabled) label = '快捷键贴图已暂停';
       else if (!capabilities.automaticInput) { label = '手动上传模式'; badgeClass = 'warning'; }
-      else if (!activeProfile()) { label = '等待选择上传目标'; badgeClass = 'warning'; }
+      else if (!activeProfile()) { label = state?.runtime?.detectedTarget ? '当前会话尚未匹配' : '等待识别 Termius 会话'; badgeClass = 'warning'; }
       else if (shortcutMessage && /失败|冲突|占用|不可用|错误|error|unavailable|conflict|failed/i.test(shortcutMessage)) { label = '请检查快捷键'; badgeClass = 'warning'; }
       else { label = '快捷键贴图已启用'; badgeClass = 'active'; }
     }
@@ -177,6 +181,7 @@
     $('toggle-enabled').textContent = settings?.enabled ? '暂停贴图' : '启用贴图';
     $('shortcut-runtime').textContent = shortcutMessage || '快捷键注册结果由本地应用提供。';
     $('platform-label').textContent = connected ? `${capabilities.platform === 'windows' ? 'Windows' : capabilities.platform === 'linux' ? 'Linux' : capabilities.platform || '本机'}${capabilities.displayServer ? ` · ${capabilities.displayServer}` : ''}` : '未连接本地应用';
+    $('save-target-help').textContent = capabilities.automaticTargetSelection ? '登录成功后保存。切到对应的 Termius 终端，即可按真实连接自动选择服务器。' : '登录成功后保存。新服务器需在列表中设为当前目标。';
     $('footer-status').textContent = connected ? '配置与 SSH 操作均在本机处理，密码不保存。' : '预览不可连接，不会执行上传、授权或保存。';
   }
 
@@ -185,13 +190,15 @@
     $('current-name').textContent = profile?.name || '尚未选择服务器';
     $('current-endpoint').textContent = profile ? endpoint(profile) : '在“服务器”页面添加连接，并设为当前目标。';
     $('current-directory').textContent = profile?.remoteDirectory || '远程图片目录尚未配置';
-    if (!profile) notice('home-notice', '先添加服务器、核对身份并测试连接。');
+    const detected = state?.capabilities?.automaticTargetSelection ? state?.runtime?.detectedTarget : null;
+    if (detected) notice('home-notice', `${detected.message}（${detected.session || '未读取到真实连接'}）`, profile ? 'success' : 'error');
+    else if (!profile) notice('home-notice', state?.capabilities?.automaticTargetSelection ? '先添加服务器并登录，再点击对应 Termius 终端。按地址、端口和用户名识别，与标签名称无关。' : '先添加服务器并登录。');
     else if (!profile.hostKey) notice('home-notice', '尚未信任此服务器的主机指纹。请编辑并核对后再上传。', 'error');
-    else if (!profile.keyFile) notice('home-notice', '请先选择 SSH 私钥或生成专用密钥，再测试连接。');
+    else if (!profile.keyFile) notice('home-notice', '请编辑服务器，选择密码或密钥登录。');
     else if (profile.verifiedAt) notice('home-notice', `上次验证成功：${formatTime(profile.verifiedAt)}。请确认 Termius 当前会话也连接此服务器。`, 'success');
-    else notice('home-notice', '此配置尚未验证。先测试免密连接和图片目录，不会重新申请授权。');
+    else notice('home-notice', '此配置尚未验证。请编辑服务器，登录并保存。');
     const automatic = Boolean(state?.capabilities?.automaticInput);
-    $('shortcut-help').textContent = automatic ? '保持当前会话和输入框，等路径出现后再发送。' : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
+    $('shortcut-help').textContent = automatic ? (state?.capabilities?.automaticTargetSelection ? '自动识别当前 Termius 终端的真实连接。上传时保持该会话，等路径出现后再发送。' : '保持当前会话和输入框，等路径出现后再发送。') : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
     $('manual-input-note').textContent = automatic ? '窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。' : '当前环境使用手动上传模式。上传后可查看完整路径，需要时自行复制到 Termius。';
     $('manual-upload-help').textContent = state?.capabilities?.clipboardAvailable ? '也可以在此窗口按 Ctrl + V，或使用下面的按钮。' : '可在此窗口按 Ctrl + V 粘贴图片，或选择本机图片文件。';
   }
@@ -207,7 +214,7 @@
   }
 
   function renderServers() {
-    const signature = JSON.stringify([connected, state?.settings?.activeServerId, state?.settings?.servers]);
+    const signature = JSON.stringify([connected, activeProfile()?.id, state?.settings?.servers]);
     if (signature === serverListSignature) return;
     serverListSignature = signature;
     const list = $('server-list');
@@ -235,13 +242,13 @@
       info.append(title, address, validation);
       const actions = document.createElement('div');
       actions.className = 'server-actions';
-      if (profile.id === state.settings.activeServerId) {
+      if (profile.id === activeProfile()?.id) {
         const badge = document.createElement('span');
         badge.className = 'badge';
-        badge.textContent = '当前目标';
+        badge.textContent = state?.runtime?.detectedTarget && state?.capabilities?.automaticTargetSelection ? '自动跟随' : '当前目标';
         actions.append(badge);
       } else actions.append(actionButton('设为当前目标', () => setActive(profile)));
-      actions.append(actionButton('编辑与检查', () => openEditor(profile)));
+      actions.append(actionButton('编辑服务器', () => openEditor(profile)));
       actions.append(actionButton('删除', () => removeProfile(profile), 'link danger-button'));
       row.append(info, actions);
       list.append(row);
@@ -322,7 +329,7 @@
     renderShortcut();
     $('settings-path').textContent = next.settingsPath || '本地应用未返回配置路径。';
     if (editorProfile) {
-      $('active-editor-note').hidden = editorProfile.id !== state.settings.activeServerId;
+      $('active-editor-note').hidden = editorProfile.id !== activeProfile()?.id;
       renderEditorTrust();
     }
     renderAvailability();
@@ -387,11 +394,17 @@
     };
     editorDirty = false;
     trustCandidate = null;
+    pendingLogin = false;
+    useDefaultDirectory = !profile?.remoteDirectory;
+    $('login-method').value = profile?.keyFile ? 'key' : 'password';
+    $('login-password').value = '';
+    $('directory-browser').hidden = true;
+    renderLoginMethod();
     Object.entries(fieldIds).forEach(([key, id]) => { $(id).value = editorProfile[key] ?? ''; });
     clearFieldErrors();
     $('editor-title').textContent = profile ? '编辑服务器' : '添加服务器';
     $('editor-dirty').textContent = '编辑不会切换当前上传目标';
-    $('active-editor-note').hidden = !profile || profile.id !== state?.settings?.activeServerId;
+    $('active-editor-note').hidden = !profile || profile.id !== activeProfile()?.id;
     $('fingerprint-review').hidden = true;
     setEditorStatus('');
     $('editor').hidden = false;
@@ -399,7 +412,7 @@
     renderEditorTrust();
     renderAvailability();
     $('editor').scrollIntoView({ block: 'start', behavior: 'auto' });
-    (profile ? $('editor-title') : $('server-name')).focus({ preventScroll: true });
+    (profile ? $('editor-title') : $('server-host')).focus({ preventScroll: true });
   }
 
   function makeId() {
@@ -414,6 +427,8 @@
     if (!editorProfile) return null;
     const profile = { ...editorProfile };
     Object.entries(fieldIds).forEach(([key, id]) => { profile[key] = key === 'port' ? Number($(id).value.trim()) : $(id).value.trim(); });
+    profile.name ||= profile.host;
+    if (useDefaultDirectory) profile.remoteDirectory = '/';
     return profile;
   }
 
@@ -425,7 +440,7 @@
     });
   }
 
-  function validateProfile({ requireKey = false, requireTrust = false } = {}) {
+  function validateProfile({ requireKey = false } = {}) {
     const profile = readProfile();
     if (!profile) return null;
     clearFieldErrors();
@@ -436,7 +451,7 @@
     if (!/^\d+$/.test($('server-port').value.trim()) || !Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) errors.port = '端口须为 1–65535 的整数。';
     if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,63}\$?$/.test(profile.username)) errors.username = '请填写有效的 Linux 用户名。';
     if (!profile.remoteDirectory.startsWith('/') || control.test(profile.remoteDirectory)) errors.remoteDirectory = '请填写不含控制字符的 Linux 绝对路径。';
-    if (control.test(profile.keyFile) || (requireKey && !profile.keyFile)) errors.keyFile = '请先选择已有私钥，或生成本工具专用密钥。';
+    if (control.test(profile.keyFile) || (requireKey && !profile.keyFile)) errors.keyFile = '请选择已获得服务器授权的私钥。';
     Object.entries(errors).forEach(([key, message]) => {
       const input = $(fieldIds[key]);
       input.setAttribute('aria-invalid', 'true');
@@ -446,11 +461,6 @@
     });
     const first = Object.keys(errors)[0];
     if (first) { $(fieldIds[first]).focus(); return null; }
-    if (requireTrust && !profile.hostKey) {
-      setEditorStatus('请先获取主机指纹，与可信记录核对后确认信任。', 'error');
-      $('scan-host').focus();
-      return null;
-    }
     return profile;
   }
 
@@ -459,29 +469,26 @@
     $('editor-dirty').textContent = '有未保存的修改';
   }
 
+  function renderLoginMethod() {
+    const password = $('login-method').value === 'password';
+    $('password-field').hidden = !password;
+    $('key-field').hidden = password;
+    $('login-password').required = password;
+  }
+
   function renderEditorTrust() {
     if (!editorProfile) return;
-    const profile = readProfile();
-    $('trust-status').textContent = profile.hostKey ? '此地址已核对主机身份。修改地址或端口会清除旧信任。' : '尚未信任此地址。请获取指纹，与可信记录核对。';
-    $('saved-fingerprint').hidden = !profile.hostKey;
-    $('saved-host-key').textContent = profile.hostKey || '';
-    if (profile.hostKey && crypto.subtle) {
-      const key = profile.hostKey;
-      const blob = key.split(/\s+/)[1];
-      try {
-        const bytes = Uint8Array.from(atob(blob), character => character.charCodeAt(0));
-        crypto.subtle.digest('SHA-256', bytes).then(hash => {
-          if (editorProfile && readProfile().hostKey === key) {
-            $('saved-host-key').textContent = `SHA256:${btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/=+$/, '')}`;
-          }
-        }).catch(() => { /* Keep the exact saved public key when local digest support is unavailable. */ });
-      } catch { /* The backend validates saved host keys; keep the original value visible. */ }
-    }
-    $('verification-status').textContent = profile.verifiedAt ? `当前编辑内容验证通过：${formatTime(profile.verifiedAt)}。保存后才写入配置。` : '测试只验证当前编辑内容，不切换目标或写入授权。';
+    $('browse-directory').disabled = !connected || uiBusy || isRunning() || !editorProfile.verifiedAt;
+    $('directory-help').textContent = editorProfile.verifiedAt
+      ? '已登录，可选择服务器上的其他可写文件夹。更改目录后会重新验证。'
+      : '留空使用默认目录，登录成功后可浏览远端文件夹。';
   }
 
   function editorChanged(event) {
-    if (!editorProfile || !Object.values(fieldIds).includes(event.target.id)) return;
+    if (!editorProfile) return;
+    if (event.target.id === 'login-method') { $('login-password').value = ''; renderLoginMethod(); }
+    if (event.target.id === 'server-directory') useDefaultDirectory = !event.target.value.trim();
+    if (!Object.values(fieldIds).includes(event.target.id)) { markEditorDirty(); return; }
     const before = editorProfile;
     const after = readProfile();
     if (event.target.id === 'server-host' || event.target.id === 'server-port') {
@@ -491,28 +498,11 @@
         $('fingerprint-review').hidden = true;
       }
     }
-    if (event.target.id !== 'server-name') after.verifiedAt = null;
+    if (!['server-name', 'server-directory'].includes(event.target.id)) { after.verifiedAt = null; $('directory-browser').hidden = true; }
     editorProfile = after;
     markEditorDirty();
     renderEditorTrust();
     renderAvailability();
-  }
-
-  async function scanHost() {
-    const profile = validateProfile();
-    if (!profile) return;
-    const identity = endpointIdentity(profile);
-    await perform('正在读取主机指纹，请稍候…', 'editor', async () => {
-      const candidate = await invoke('scan_host_key', { profile });
-      if (!candidate?.key || !candidate?.fingerprint) throw new Error('服务器未返回可核对的主机公钥和指纹。');
-      if (identity !== endpointIdentity(readProfile())) throw new Error('服务器地址已变化，请重新获取指纹。');
-      trustCandidate = { ...candidate, endpoint: identity };
-      $('fingerprint-endpoint').textContent = endpoint(profile);
-      $('fingerprint-value').textContent = candidate.fingerprint;
-      $('fingerprint-changed').hidden = !profile.hostKey || profile.hostKey === candidate.key;
-      $('fingerprint-review').hidden = false;
-      setEditorStatus('主机公钥已取得，请核对上方指纹。尚未自动信任。');
-    });
   }
 
   function confirmFingerprint() {
@@ -522,22 +512,7 @@
     trustCandidate = null;
     $('fingerprint-review').hidden = true;
     markEditorDirty();
-    renderEditorTrust();
-    renderAvailability();
-    setEditorStatus('指纹已确认。请测试连接，最后保存服务器。', 'success');
-  }
-
-  async function testServer() {
-    const profile = validateProfile({ requireKey: true, requireTrust: true });
-    if (!profile) return;
-    await perform('正在验证密钥连接与远程目录…', 'editor', async () => {
-      const result = await invoke('test_server', { profile });
-      if (!result?.verifiedAt) throw new Error('本地应用没有返回连接验证结果。');
-      editorProfile = { ...profile, verifiedAt: result.verifiedAt };
-      markEditorDirty();
-      renderEditorTrust();
-      setEditorStatus(`${result.message || '连接验证通过。'} 这是当前编辑内容的结果，保存后才生效。`, 'success');
-    });
+    if (pendingLogin) { pendingLogin = false; saveServer(); }
   }
 
   async function chooseKey() {
@@ -548,71 +523,71 @@
       editorProfile = { ...readProfile(), verifiedAt: null };
       markEditorDirty();
       renderEditorTrust();
-      setEditorStatus('已选择私钥。已有授权可直接测试连接。');
+      setEditorStatus('已选择私钥。点击“登录并保存”验证已有授权。');
     });
-  }
-
-  async function generateKey() {
-    const profile = validateProfile();
-    if (!profile) return;
-    const confirmed = await confirmAction('生成或复用专用密钥', '密钥只保留在本机。指定路径已有私钥时将复用，不覆盖原文件。本操作不会申请远端授权。', '生成或复用');
-    if (!confirmed) return;
-    await perform('正在生成或读取专用密钥…', 'editor', async () => {
-      const path = await invoke('generate_key', { profile });
-      if (typeof path !== 'string' || !path) throw new Error('本地应用没有返回专用密钥路径。');
-      $('server-key').value = path;
-      editorProfile = { ...readProfile(), verifiedAt: null };
-      markEditorDirty();
-      renderEditorTrust();
-      setEditorStatus('专用密钥已准备好。若尚未授权，可点击“首次授权此服务器”。', 'success');
-    });
-  }
-
-  function openAuthorization() {
-    const profile = validateProfile({ requireKey: true, requireTrust: true });
-    if (!profile) return;
-    $('authorization-target').textContent = `${endpoint(profile)}\n图片目录：${profile.remoteDirectory}`;
-    $('authorization-password').value = '';
-    $('authorization-dialog').showModal();
-    $('authorization-password').focus();
-  }
-
-  async function authorizeServer(event) {
-    event.preventDefault();
-    const profile = validateProfile({ requireKey: true, requireTrust: true });
-    if (!profile || !$('authorization-password').value) return;
-    let password = $('authorization-password').value;
-    $('authorization-password').value = '';
-    $('authorization-dialog').close();
-    try {
-      await perform('正在授权所选服务器，请稍候…', 'editor', async () => {
-        let result;
-        try { result = await invoke('authorize_server', { profile, password }); }
-        catch (error) { throw new Error(errorText(error).split(password).join('[密码已隐藏]')); }
-        if (!result?.verifiedAt) throw new Error('本地应用没有返回授权后的验证结果，请测试连接确认。');
-        editorProfile = { ...profile, verifiedAt: result.verifiedAt };
-        markEditorDirty();
-        renderEditorTrust();
-        setEditorStatus(`${result.message || '首次授权与连接验证已完成。'} 请保存服务器配置。`, 'success');
-      });
-    } finally { password = ''; }
   }
 
   async function saveServer(event) {
-    event.preventDefault();
-    const profile = validateProfile({ requireKey: true });
+    event?.preventDefault();
+    const passwordLogin = $('login-method').value === 'password';
+    const profile = validateProfile({ requireKey: !passwordLogin });
     if (!profile) return;
-    await perform('正在保存服务器配置…', 'editor', async () => {
-      const settings = await invoke('save_server', { profile });
+    if (passwordLogin) profile.keyFile = '';
+    if (passwordLogin && !$('login-password').value) {
+      setEditorStatus('请输入登录密码。', 'error'); $('login-password').focus(); return;
+    }
+    await perform('正在登录服务器…', 'editor', async () => {
+      if (!profile.hostKey) {
+        const candidate = await invoke('scan_host_key', { profile });
+        if (!candidate?.key || !candidate?.fingerprint) throw new Error('无法读取服务器身份。');
+        trustCandidate = { ...candidate, endpoint: endpointIdentity(profile) };
+        pendingLogin = true;
+        $('fingerprint-endpoint').textContent = endpoint(profile);
+        $('fingerprint-value').textContent = candidate.fingerprint;
+        $('fingerprint-review').hidden = false;
+        setEditorStatus('确认指纹后自动继续登录。');
+        return;
+      }
+      let password = passwordLogin ? $('login-password').value : null;
+      $('login-password').value = '';
+      let loggedIn;
+      try {
+        loggedIn = await invoke('login_server', { profile, password, useDefaultDirectory });
+      } catch (error) {
+        throw new Error(password ? errorText(error).split(password).join('[密码已隐藏]') : errorText(error));
+      } finally { password = null; }
+      editorProfile = loggedIn;
+      $('server-key').value = loggedIn.keyFile;
+      $('server-directory').value = loggedIn.remoteDirectory;
+      $('server-name').value = loggedIn.name;
+      useDefaultDirectory = false;
+      // Reuse the newly authorized key if saving fails; do not ask for the password again.
+      $('login-method').value = 'key';
+      renderLoginMethod();
+      const settings = await invoke('save_server', { profile: loggedIn });
       applySettings(settings);
-      const saved = settings.servers.find(server => server.id === profile.id);
-      if (!saved) throw new Error('服务器未出现在返回的已保存配置中，请重新加载确认。');
-      editorProfile = { ...saved };
       editorDirty = false;
-      $('editor-dirty').textContent = '修改已保存';
+      $('editor-dirty').textContent = '已登录并保存';
+      setEditorStatus('登录成功，图片目录已就绪。服务器配置已保存。', 'success');
       renderEditorTrust();
-      setEditorStatus(profile.id === settings.activeServerId ? '服务器已保存，下一次上传使用此配置。' : '服务器已保存，当前上传目标没有改变。可在列表中设为当前目标。', 'success');
-      toast('服务器配置已保存');
+      toast('服务器已登录并保存');
+    });
+  }
+
+  async function browseDirectory(directory = null) {
+    if (!editorProfile?.verifiedAt) return;
+    await perform('正在读取远端目录…', 'editor', async () => {
+      const paths = await invoke('browse_remote_directory', { profile: readProfile(), directory });
+      browsePath = paths[0];
+      $('browse-path').textContent = browsePath;
+      $('directory-list').replaceChildren();
+      paths.slice(1).sort().forEach(path => {
+        const button = actionButton(path.split('/').pop() || '/', () => browseDirectory(path));
+        $('directory-list').append(button);
+      });
+      if (paths.length === 1) $('directory-list').textContent = '没有子文件夹';
+      $('directory-browser').hidden = false;
+      setEditorStatus('选择文件夹后点击“使用此目录”。');
     });
   }
 
@@ -627,7 +602,7 @@
   }
 
   async function removeProfile(profile) {
-    const active = profile.id === state?.settings?.activeServerId;
+    const active = profile.id === activeProfile()?.id;
     const approved = await confirmAction('删除本地服务器配置？', `删除“${profile.name}”的本地配置？${active ? '\n这是当前上传目标，删除后请重新确认上传目标。' : ''}\n\n服务器上的图片、SSH 密钥与已有授权均会保留。`, '删除配置');
     if (!approved) return;
     await perform('正在删除本地配置…', 'servers', async () => {
@@ -801,23 +776,32 @@
   $('cancel-edit').addEventListener('click', async () => {
     if (!await mayDiscardEditor()) return;
     editorProfile = null;
+    $('login-password').value = '';
+    pendingLogin = false;
     editorDirty = false;
     $('editor').hidden = true;
     $('add-server').focus();
   });
   $('server-form').addEventListener('input', editorChanged);
   $('server-form').addEventListener('submit', saveServer);
-  $('scan-host').addEventListener('click', scanHost);
   $('confirm-fingerprint').addEventListener('click', confirmFingerprint);
-  $('reject-fingerprint').addEventListener('click', () => { trustCandidate = null; $('fingerprint-review').hidden = true; setEditorStatus('没有接受候选指纹。已有信任与保存配置保持原样。'); });
+  $('reject-fingerprint').addEventListener('click', () => {
+    trustCandidate = null; pendingLogin = false; $('login-password').value = '';
+    $('fingerprint-review').hidden = true; setEditorStatus('已取消连接。');
+  });
   $('choose-key').addEventListener('click', chooseKey);
-  $('generate-key').addEventListener('click', generateKey);
-  $('test-server').addEventListener('click', testServer);
-  $('open-authorization').addEventListener('click', openAuthorization);
-  $('authorization-form').addEventListener('submit', authorizeServer);
-  $('cancel-authorization').addEventListener('click', () => $('authorization-dialog').close());
-  $('authorization-dialog').addEventListener('close', () => { $('authorization-password').value = ''; });
-  $('authorization-dialog').addEventListener('cancel', () => { $('authorization-password').value = ''; });
+  $('browse-directory').addEventListener('click', () => browseDirectory(useDefaultDirectory ? null : $('server-directory').value || null));
+  $('browse-parent').addEventListener('click', () => browseDirectory(browsePath?.replace(/\/[^/]+\/?$/, '') || '/'));
+  $('select-directory').addEventListener('click', () => {
+    $('server-directory').value = browsePath; useDefaultDirectory = false;
+    editorProfile = readProfile(); markEditorDirty(); $('directory-browser').hidden = true;
+    setEditorStatus('已选择目录，点击“登录并保存”验证并应用。');
+  });
+  $('close-browser').addEventListener('click', () => { $('directory-browser').hidden = true; });
+  $('use-default-directory').addEventListener('click', () => {
+    $('server-directory').value = ''; useDefaultDirectory = true; markEditorDirty();
+    $('directory-browser').hidden = true; setEditorStatus('保存时使用服务器用户主目录下的默认目录。');
+  });
   $('preferences-form').addEventListener('submit', savePreferences);
   ['legacy-shortcut', 'close-to-tray', 'notifications'].forEach(id => $(id).addEventListener('change', markPreferencesDirty));
   $('shortcut-capture').addEventListener('click', () => {
@@ -864,7 +848,7 @@
   window.addEventListener('beforeunload', () => {
     if (unlistenState) unlistenState();
     if (unlistenDrop) unlistenDrop();
-    $('authorization-password').value = '';
+    $('login-password').value = '';
   });
   renderAvailability();
   connect();

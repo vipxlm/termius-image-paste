@@ -616,6 +616,44 @@ impl SshClient {
         Ok(())
     }
 
+    pub async fn remote_directory(
+        &self,
+        profile: &ServerProfile,
+        directory: Option<&str>,
+        browse: bool,
+        token: CancellationToken,
+    ) -> AppResult<Vec<String>> {
+        profile.validate(true)?;
+        require_key(profile)?;
+        let command = if let Some(path) = directory {
+            if !path.starts_with('/') || has_control(path) || path.len() > 4096 {
+                return Err(AppError::new(
+                    "invalid_directory",
+                    "请选择有效的远端绝对路径。",
+                ));
+            }
+            format!("cd -- {} || exit 1; ", quote_posix(path))
+        } else if browse {
+            "cd -- \"$HOME\" || exit 1; ".into()
+        } else {
+            "umask 077; mkdir -p -- \"$HOME/.cache/termius-images\" && cd -- \"$HOME/.cache/termius-images\" || exit 1; ".into()
+        };
+        let listing = if browse {
+            "printf '%s\\0' \"$PWD\"; for entry in \"$PWD\"/*/ \"$PWD\"/.[!.]*/ \"$PWD\"/..?*/; do [ -d \"$entry\" ] && printf '%s\\0' \"${entry%/}\"; done; true"
+        } else {
+            "test -w . || exit 1; printf '%s\\0' \"$PWD\""
+        };
+        let mut args = self.base_args(profile, true)?;
+        args.extend([
+            "-p".into(),
+            profile.port.to_string(),
+            target(profile),
+            command + listing,
+        ]);
+        let output = run_program("ssh", args, &[], Duration::from_secs(30), token, &[0]).await?;
+        parse_remote_directories(&output.stdout)
+    }
+
     pub async fn generate_key(
         &self,
         profile: &ServerProfile,
@@ -816,7 +854,7 @@ impl SshClient {
                 detail: error.detail,
             });
         }
-        self.test(profile, token).await
+        Ok(())
     }
 
     async fn authorization_key(
@@ -952,6 +990,60 @@ impl SshClient {
         }
         Ok(path)
     }
+}
+
+fn parse_remote_directories(output: &str) -> AppResult<Vec<String>> {
+    let paths: Vec<String> = output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if !output.ends_with('\0')
+        || paths.is_empty()
+        || paths
+            .iter()
+            .any(|path| !path.starts_with('/') || has_control(path))
+    {
+        return Err(AppError::new(
+            "directory_output",
+            "无法读取远端目录，请检查服务器登录脚本输出。",
+        ));
+    }
+    Ok(paths)
+}
+
+/// Match the endpoint reported by Termius; display names are irrelevant.
+pub fn server_for_connection<'a>(
+    servers: &'a [ServerProfile],
+    connection: &crate::termius::Connection,
+) -> AppResult<&'a ServerProfile> {
+    let normalize = |host: &str| {
+        host.trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|_| host.trim().trim_end_matches('.').to_ascii_lowercase())
+    };
+    let host = normalize(&connection.host);
+    let mut matches = servers.iter().filter(|server| {
+        normalize(&server.host) == host
+            && server.port == connection.port
+            && server.username == connection.username
+    });
+    let matched = matches.next().ok_or_else(|| {
+        AppError::new(
+            "connection_unmatched",
+            "当前真实连接尚未配置。请添加相同主机地址、端口和用户名的服务器。",
+        )
+    })?;
+    if matches.next().is_some() {
+        return Err(AppError::new(
+            "connection_ambiguous",
+            "同一连接配置了多台服务器，请保留唯一的主机、端口和用户名组合。",
+        ));
+    }
+    Ok(matched)
 }
 
 fn require_key(profile: &ServerProfile) -> AppResult<()> {
@@ -1478,6 +1570,70 @@ mod tests {
             ..Settings::default()
         }
     }
+    #[test]
+    fn real_connection_selection_ignores_labels_and_requires_unique_full_endpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut p = profile(directory.path());
+        p.name = "arbitrary label".into();
+        p.host = "192.0.2.10".into();
+        p.username = "user".into();
+        p.port = 2222;
+        let connection = crate::termius::Connection {
+            terminal_id: "terminal".into(),
+            connection_id: "connection".into(),
+            protocol: "ssh".into(),
+            host: p.host.clone(),
+            port: p.port,
+            username: p.username.clone(),
+            target_id: "page".into(),
+        };
+        assert!(server_for_connection(&[p.clone()], &connection).is_ok());
+        for change in 0..3 {
+            let mut wrong = p.clone();
+            match change {
+                0 => wrong.host = "192.0.2.100".into(),
+                1 => wrong.port = 22,
+                _ => wrong.username = "other".into(),
+            }
+            assert!(server_for_connection(&[wrong], &connection).is_err());
+        }
+        assert_eq!(
+            server_for_connection(&[p.clone(), p.clone()], &connection)
+                .unwrap_err()
+                .code,
+            "connection_ambiguous"
+        );
+        p.host = "EXAMPLE.test.".into();
+        let mut dns = connection.clone();
+        dns.host = "example.test".into();
+        assert!(server_for_connection(&[p.clone()], &dns).is_ok());
+        p.host = "2001:db8::1".into();
+        dns.host = "[2001:0db8::1]".into();
+        assert!(server_for_connection(&[p], &dns).is_ok());
+    }
+
+    #[test]
+    fn remote_directory_response_preserves_names_and_rejects_login_noise() {
+        assert_eq!(
+            parse_remote_directories("/srv/home\0/srv/home/图片 a'b\0/srv/home/.cache\0").unwrap(),
+            vec!["/srv/home", "/srv/home/图片 a'b", "/srv/home/.cache"]
+        );
+        for invalid in [
+            "",
+            "\0",
+            "/home",
+            "welcome\n/home\0",
+            "/home\0trailing output",
+            "/home\0relative\0",
+            "/home\0/bad\nname\0",
+        ] {
+            assert_eq!(
+                parse_remote_directories(invalid).unwrap_err().code,
+                "directory_output"
+            );
+        }
+    }
+
     #[test]
     fn validates_endpoints_and_paths() {
         let directory = tempfile::tempdir().unwrap();

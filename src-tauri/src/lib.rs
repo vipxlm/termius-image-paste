@@ -1,5 +1,6 @@
 mod core;
 mod platform;
+mod termius;
 
 use core::{AppError, AppResult, ServerProfile, Settings, SettingsStore, SshClient};
 use serde::Serialize;
@@ -38,12 +39,20 @@ struct LastResult {
     at: String,
     details: Option<String>,
 }
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct DetectedTarget {
+    session: String,
+    server_id: Option<String>,
+    message: String,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeState {
     shortcut_status: String,
     operation: Option<Operation>,
     last_result: Option<LastResult>,
+    detected_target: Option<DetectedTarget>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,6 +240,7 @@ async fn set_active_server(app: AppHandle, id: String) -> AppResult<Settings> {
             .ok_or_else(|| AppError::new("unknown_server", "服务器不存在。"))?;
         p.validate(true)?;
         settings.active_server_id = Some(id);
+        s.runtime.lock().unwrap().detected_target = None;
         persist(&app, settings)
     })
     .await
@@ -306,12 +316,6 @@ struct ScannedKey {
     key: String,
     fingerprint: String,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Verified {
-    verified_at: String,
-    message: String,
-}
 #[tauri::command]
 async fn scan_host_key(app: AppHandle, profile: ServerProfile) -> AppResult<ScannedKey> {
     let job = begin(
@@ -333,64 +337,69 @@ async fn scan_host_key(app: AppHandle, profile: ServerProfile) -> AppResult<Scan
     result
 }
 #[tauri::command]
-async fn test_server(app: AppHandle, profile: ServerProfile) -> AppResult<Verified> {
-    let job = begin(
-        &app,
-        "test",
-        "正在验证密钥与图片目录…",
-        Some(target_name(&profile)),
-    )?;
-    let result = state(&app)
-        .ssh
-        .test(&profile, job.token.clone())
-        .await
-        .map(|_| Verified {
-            verified_at: now(),
-            message: "密钥登录成功，图片目录可写。".into(),
-        });
-    finish(&app, &job, None);
-    result
-}
-#[tauri::command]
-async fn generate_key(app: AppHandle, profile: ServerProfile) -> AppResult<String> {
-    let job = begin(
-        &app,
-        "key",
-        "正在准备本机专用密钥…",
-        Some(target_name(&profile)),
-    )?;
-    let result = state(&app)
-        .ssh
-        .generate_key(&profile, job.token.clone())
-        .await;
-    finish(&app, &job, None);
-    result
-}
-#[tauri::command]
-async fn authorize_server(
+async fn login_server(
     app: AppHandle,
-    profile: ServerProfile,
-    password: String,
-) -> AppResult<Verified> {
+    mut profile: ServerProfile,
+    password: Option<String>,
+    use_default_directory: bool,
+) -> AppResult<ServerProfile> {
     let job = begin(
         &app,
-        "authorize",
-        "正在完成本次 SSH 授权…",
+        "connecting",
+        "正在登录并准备图片目录…",
         Some(target_name(&profile)),
     )?;
     let result = async {
-        let exe =
-            std::env::current_exe().map_err(|e| error("askpass", "无法定位密码辅助程序。", e))?;
-        state(&app)
+        let s = state(&app);
+        if let Some(password) = password {
+            if profile.key_file.is_empty() {
+                profile.key_file = s.ssh.generate_key(&profile, job.token.clone()).await?;
+            }
+            profile.validate(true)?;
+            let exe = std::env::current_exe()
+                .map_err(|e| error("askpass", "无法定位密码辅助程序。", e))?;
+            s.ssh
+                .authorize(&profile, password, &exe, job.token.clone())
+                .await?;
+        }
+        let paths = s
             .ssh
-            .authorize(&profile, password, &exe, job.token.clone())
+            .remote_directory(
+                &profile,
+                if use_default_directory {
+                    None
+                } else {
+                    Some(&profile.remote_directory)
+                },
+                false,
+                job.token.clone(),
+            )
             .await?;
-        Ok(Verified {
-            verified_at: now(),
-            message: "授权并验证成功，密码未保存。".into(),
-        })
+        profile.remote_directory = paths[0].clone();
+        s.ssh.test(&profile, job.token.clone()).await?;
+        profile.verified_at = Some(now());
+        Ok(profile)
     }
     .await;
+    finish(&app, &job, None);
+    result
+}
+#[tauri::command]
+async fn browse_remote_directory(
+    app: AppHandle,
+    profile: ServerProfile,
+    directory: Option<String>,
+) -> AppResult<Vec<String>> {
+    let job = begin(
+        &app,
+        "connecting",
+        "正在读取远端文件夹…",
+        Some(target_name(&profile)),
+    )?;
+    let result = state(&app)
+        .ssh
+        .remote_directory(&profile, directory.as_deref(), true, job.token.clone())
+        .await;
     finish(&app, &job, None);
     result
 }
@@ -506,16 +515,44 @@ fn start_upload(
     source: ImageSource,
     target: Option<platform::Target>,
 ) -> AppResult<()> {
+    let target = match target {
+        Some(mut target) if cfg!(windows) => {
+            target.terminal = Some(termius::capture(target.process)?);
+            Some(target)
+        }
+        other => other,
+    };
     let s = state(&app);
     let (profile, generation) = {
         let settings = s.settings.lock().unwrap();
         if target.is_some() && !settings.enabled {
             return Err(AppError::new("paused", "贴图快捷键已暂停。"));
         }
-        let p = settings
-            .active_server()
-            .ok_or_else(|| AppError::new("no_target", "请先选择当前上传服务器。"))?
-            .clone();
+        let p = if platform::capabilities().automatic_target_selection {
+            if let Some(target) = &target {
+                core::server_for_connection(
+                    &settings.servers,
+                    target.terminal.as_ref().ok_or_else(|| {
+                        AppError::new("connection_unavailable", "无法读取当前 Termius 真实连接。")
+                    })?,
+                )?
+            } else if let Some(detected) = &s.runtime.lock().unwrap().detected_target {
+                settings
+                    .servers
+                    .iter()
+                    .find(|p| Some(&p.id) == detected.server_id.as_ref())
+                    .ok_or_else(|| AppError::new("connection_unmatched", &detected.message))?
+            } else {
+                settings.active_server().ok_or_else(|| {
+                    AppError::new("no_target", "请先打开已配置服务器的 Termius 会话。")
+                })?
+            }
+        } else {
+            settings
+                .active_server()
+                .ok_or_else(|| AppError::new("no_target", "请先选择当前上传服务器。"))?
+        }
+        .clone();
         (p, s.generation.load(Ordering::SeqCst))
     };
     profile.validate(true)?;
@@ -534,6 +571,16 @@ fn start_upload(
                     .map_err(|e| error("image_prepare", "读取图片失败。", e))??;
             if job.token.is_cancelled() {
                 return Err(AppError::new("cancelled", "操作已取消。"));
+            }
+            if s.generation.load(Ordering::SeqCst) != generation
+                || target
+                    .as_ref()
+                    .is_some_and(|target| !platform::target_unchanged(target))
+            {
+                return Err(AppError::new(
+                    "target_changed",
+                    "当前连接或设置已变化，已停止上传，请重新触发贴图。",
+                ));
             }
             stage(&app, &job, "正在上传图片…", "upload");
             let remote = s
@@ -718,7 +765,45 @@ async fn linux_tray_host() -> bool {
         .stderr(std::process::Stdio::null());
     matches!(tokio::time::timeout(Duration::from_secs(2),command.output()).await,Ok(Ok(output))if output.status.success()&&String::from_utf8_lossy(&output.stdout).trim()=="(<true>,)")
 }
+fn observe_target(app: &AppHandle) {
+    if !platform::capabilities().automatic_target_selection {
+        return;
+    }
+    let Some(target) = platform::capture_target() else {
+        return;
+    };
+    let connection = termius::capture(target.process);
+    let s = state(app);
+    let settings = s.settings.lock().unwrap();
+    let detected = match connection {
+        Ok(connection) => match core::server_for_connection(&settings.servers, &connection) {
+            Ok(server) => DetectedTarget {
+                session: connection.endpoint(),
+                server_id: Some(server.id.clone()),
+                message: format!("已识别当前真实连接：{}", server.name),
+            },
+            Err(error) => DetectedTarget {
+                session: connection.endpoint(),
+                server_id: None,
+                message: error.message,
+            },
+        },
+        Err(error) => DetectedTarget {
+            session: String::new(),
+            server_id: None,
+            message: error.message,
+        },
+    };
+    drop(settings);
+    let mut runtime = s.runtime.lock().unwrap();
+    if runtime.detected_target.as_ref() != Some(&detected) {
+        runtime.detected_target = Some(detected);
+        drop(runtime);
+        publish(app);
+    }
+}
 fn bind_shortcuts(app: &AppHandle) {
+    observe_target(app);
     let s = state(app);
     let settings = s.settings.lock().unwrap().clone();
     let caps = platform::capabilities();
@@ -728,10 +813,13 @@ fn bind_shortcuts(app: &AppHandle) {
         Some("已暂停")
     } else if !caps.hotkey_available {
         Some("当前桌面使用手动上传")
-    } else if settings
-        .active_server()
-        .is_none_or(|p| p.validate(true).is_err())
-    {
+    } else if if caps.automatic_target_selection {
+        !settings.servers.iter().any(|p| p.validate(true).is_ok())
+    } else {
+        settings
+            .active_server()
+            .is_none_or(|p| p.validate(true).is_err())
+    } {
         Some("请先配置并选择服务器")
     } else if s.busy.lock().unwrap().is_some() {
         Some("操作进行中")
@@ -810,6 +898,18 @@ pub fn run() {
                                 start_upload(app.clone(), ImageSource::Clipboard, Some(target))
                             {
                                 let s = state(app);
+                                if s.settings.lock().unwrap().notifications {
+                                    let handle = app.clone();
+                                    let message = e.message.clone();
+                                    tauri::async_runtime::spawn_blocking(move || {
+                                        let _ = handle
+                                            .notification()
+                                            .builder()
+                                            .title("Termius 贴图助手")
+                                            .body(message)
+                                            .show();
+                                    });
+                                }
                                 s.runtime.lock().unwrap().last_result = Some(LastResult {
                                     status: "error".into(),
                                     stage: "start".into(),
@@ -836,9 +936,8 @@ pub fn run() {
             set_enabled,
             save_preferences,
             scan_host_key,
-            test_server,
-            generate_key,
-            authorize_server,
+            login_server,
+            browse_remote_directory,
             cancel_operation,
             choose_key_file,
             choose_image_file,
@@ -857,6 +956,7 @@ pub fn run() {
             let runtime = RuntimeState {
                 shortcut_status: "正在检查系统能力…".into(),
                 operation: None,
+                detected_target: None,
                 last_result: startup_error.as_ref().map(|e| LastResult {
                     status: "error".into(),
                     stage: "settings".into(),

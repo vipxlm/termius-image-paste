@@ -10,6 +10,7 @@ pub struct Target {
     pub window: u64,
     pub process: u32,
     pub epoch: u64,
+    pub terminal: Option<crate::termius::Connection>,
 }
 
 #[derive(Clone, Serialize)]
@@ -18,6 +19,7 @@ pub struct Capabilities {
     pub platform: String,
     pub display_server: String,
     pub automatic_input: bool,
+    pub automatic_target_selection: bool,
     pub hotkey_available: bool,
     pub clipboard_available: bool,
     pub tray_available: bool,
@@ -43,6 +45,7 @@ pub fn capabilities() -> Capabilities {
         }
         .into(),
         automatic_input: available,
+        automatic_target_selection: cfg!(windows) && available,
         hotkey_available: available,
         clipboard_available: !wayland,
         tray_available: false,
@@ -74,10 +77,24 @@ pub fn capture_target() -> Option<Target> {
         window,
         process,
         epoch: before,
+        terminal: None,
     })
 }
 pub fn target_unchanged(target: &Target) -> bool {
-    capture_target().as_ref() == Some(target)
+    let Some(current) = capture_target() else {
+        return false;
+    };
+    if current.window != target.window
+        || current.process != target.process
+        || current.epoch != target.epoch
+    {
+        return false;
+    }
+    target.terminal.as_ref().is_none_or(|terminal| {
+        crate::termius::capture(target.process)
+            .as_ref()
+            .is_ok_and(|current| current == terminal)
+    })
 }
 pub fn type_path(target: &Target, path: &str) -> Result<(), String> {
     if path.is_empty() || path.len() > 16384 || path.chars().any(char::is_control) {
@@ -87,6 +104,17 @@ pub fn type_path(target: &Target, path: &str) -> Result<(), String> {
         return Err("上传已完成，但输入窗口发生变化，未填入路径。".into());
     }
     native::type_text(target, path)
+}
+pub fn process_executable(process: u32) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        native::process_executable(process)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = process;
+        None
+    }
 }
 pub fn modifiers_down() -> bool {
     native::modifiers_down()
@@ -194,14 +222,8 @@ mod native {
             UnhookWinEvent(hook);
         });
     }
-    pub fn foreground() -> Option<(u64, u32)> {
+    pub fn process_executable(pid: u32) -> Option<std::path::PathBuf> {
         unsafe {
-            let window = GetForegroundWindow();
-            if window.is_null() {
-                return None;
-            }
-            let mut pid = 0;
-            GetWindowThreadProcessId(window, &mut pid);
             let process = OpenProcess(0x1000, 0, pid);
             if process.is_null() {
                 return None;
@@ -213,8 +235,21 @@ mod native {
             if ok == 0 {
                 return None;
             }
-            let executable = String::from_utf16_lossy(&name[..length as usize]);
-            if !std::path::Path::new(&executable)
+            Some(std::path::PathBuf::from(String::from_utf16_lossy(
+                &name[..length as usize],
+            )))
+        }
+    }
+    pub fn foreground() -> Option<(u64, u32)> {
+        unsafe {
+            let window = GetForegroundWindow();
+            if window.is_null() {
+                return None;
+            }
+            let mut pid = 0;
+            GetWindowThreadProcessId(window, &mut pid);
+            let executable = process_executable(pid)?;
+            if !executable
                 .file_name()?
                 .to_str()?
                 .eq_ignore_ascii_case("Termius.exe")
@@ -886,6 +921,7 @@ mod tests {
             window: 1,
             process: 3,
             epoch: 4,
+            terminal: None,
         };
         let mut b = a.clone();
         b.epoch += 1;

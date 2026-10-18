@@ -35,8 +35,8 @@
           <section class="target-panel" aria-label="当前上传目标">
             <div class="row"><span class="eyebrow">当前上传目标</span><button type="button" class="link" id="manage-target">管理服务器</button></div>
             <div class="target-name"><span class="server-icon"><svg aria-hidden="true"><use href="#icon-server"/></svg></span><div><h2 id="current-name">尚未选择服务器</h2><p class="mono muted" id="current-endpoint">连接本地应用后显示目标</p></div></div>
-            <div class="notice" id="home-notice">先添加服务器、核对身份并测试连接。</div>
-            <div class="target-footer"><span class="mono muted" id="current-directory">远程图片目录尚未配置</span><button type="button" id="check-active" data-app-action disabled>编辑与检查</button></div>
+            <div class="notice" id="home-notice">先添加服务器并登录。</div>
+            <div class="target-footer"><span class="mono muted" id="current-directory">远程图片目录尚未配置</span><button type="button" id="check-active" data-app-action disabled>编辑服务器</button></div>
           </section>
           <section class="section" aria-labelledby="manual-upload-title">
             <div class="section-title"><h2 id="manual-upload-title">从此窗口上传</h2><span class="small muted">上传后显示路径，由你复制</span></div>
@@ -62,10 +62,10 @@
             </div>
           </section>
           <section class="section instructions-section" aria-labelledby="instructions-title"><h2 id="instructions-title">在 Termius 中贴图</h2><ol class="instructions"><li><h3>截取图片</h3><p>使用系统截图工具，将图片放入剪贴板。</p></li><li><h3>点击消息输入框</h3><p>确认该会话连接的就是上方服务器。</p></li><li><h3>按贴图快捷键</h3><div class="shortcut" id="home-shortcut">尚未读取</div><p id="shortcut-help">保持当前会话，等待路径出现后再发送。</p></li></ol></section>
-          <p class="footnote">上传期间离开 Termius，会停止自动输入。软件无法识别同一窗口里的标签页或输入框切换。自动操作不会覆盖截图，也不会按回车。</p>
+          <p class="footnote">上传期间离开 Termius，会停止自动输入。Windows 读取焦点终端的真实连接；连接变化会停止自动填入。终端内再次 SSH 的目标暂不能识别。Linux 仍需手动选目标。自动操作不会覆盖截图，也不会按回车。</p>
         </section>
         <section class="page" id="page-servers" aria-labelledby="servers-title" hidden>
-          <div class="heading"><div><h1 id="servers-title" tabindex="-1">服务器</h1><p class="muted">保存连接，再明确选择当前上传目标。</p></div><button type="button" class="primary" id="add-server" data-app-action disabled>添加服务器</button></div>
+          <div class="heading"><div><h1 id="servers-title" tabindex="-1">服务器</h1><p class="muted">Windows 自动跟随 Termius 当前终端的真实连接；Linux 手动选择上传目标。</p></div><button type="button" class="primary" id="add-server" data-app-action disabled>添加服务器</button></div>
           <div class="notice error" id="servers-error" role="alert" hidden></div>
           <div class="server-list" id="server-list"><p class="empty muted">正在读取服务器配置。</p></div>
           <section class="editor" id="editor" aria-labelledby="editor-title" hidden>
@@ -73,23 +73,22 @@
             <p class="hint" id="active-editor-note" hidden>这是当前上传目标。保存后，修改会用于下一次上传。</p>
             <form id="server-form" novalidate>
               <fieldset id="server-fields"><legend class="sr-only">服务器连接信息</legend><div class="form-grid">
-                <div class="field wide"><label for="server-name">名称</label><input id="server-name" name="name" maxlength="128" autocomplete="off" placeholder="例如：开发服务器" required><span class="field-error" id="name-error" hidden></span></div>
+                <div class="field wide"><label for="server-name">名称（选填）</label><input id="server-name" name="name" maxlength="128" autocomplete="off" placeholder="默认使用主机地址"><p class="hint">仅用于显示，不影响自动识别。</p><span class="field-error" id="name-error" hidden></span></div>
                 <div class="field"><label for="server-host">主机地址</label><input id="server-host" name="host" autocomplete="off" spellcheck="false" placeholder="主机名、IPv4 或 IPv6" required><span class="field-error" id="host-error" hidden></span></div>
                 <div class="field port-field"><label for="server-port">SSH 端口</label><input id="server-port" name="port" inputmode="numeric" maxlength="5" autocomplete="off" value="22" required><span class="field-error" id="port-error" hidden></span></div>
                 <div class="field wide"><label for="server-username">Linux 用户名</label><input id="server-username" name="username" autocomplete="off" spellcheck="false" placeholder="例如：user" required><span class="field-error" id="username-error" hidden></span></div>
-                <div class="field wide"><label for="server-directory">远程图片目录</label><input id="server-directory" name="remoteDirectory" autocomplete="off" spellcheck="false" placeholder="例如：/home/user/.cache/termius-images" required><p class="hint">使用 Linux 绝对路径。图片会保留在这里，供远程对话读取。</p><span class="field-error" id="directory-error" hidden></span></div>
               </div>
-              <div class="connection-step"><div class="step-heading"><span class="step-number">1</span><div><h3>核对服务器身份</h3><p class="hint" id="trust-status">首次连接需要核对主机指纹。</p></div><button type="button" id="scan-host" data-app-action disabled>获取主机指纹</button></div>
-                <div class="fingerprint-saved" id="saved-fingerprint" hidden><span class="small muted">已信任的主机身份</span><p class="mono" id="saved-host-key"></p></div>
-                <div class="notice fingerprint-review" id="fingerprint-review" hidden><strong id="fingerprint-title">请核对主机指纹</strong><p class="mono" id="fingerprint-endpoint"></p><p class="mono fingerprint" id="fingerprint-value"></p><p>请与服务器管理员或已有可信记录核对。仅从网络读取到密钥，不能证明服务器身份。</p><p id="fingerprint-changed" class="danger-text" hidden>新密钥与已信任值不同。请先查明更换原因，再决定是否信任。</p><div class="button-group"><button type="button" id="reject-fingerprint">暂不信任</button><button type="button" id="confirm-fingerprint" class="primary" data-app-action disabled>核对一致，信任此指纹</button></div></div>
-              </div>
-              <div class="connection-step"><div class="step-heading"><span class="step-number">2</span><div><h3>选择 SSH 密钥</h3><p class="hint">已有授权可直接测试，无需重复首次授权。</p></div></div><div class="field"><label for="server-key">本机私钥文件</label><div class="input-action"><input id="server-key" name="keyFile" autocomplete="off" spellcheck="false" placeholder="选择已有私钥，或生成本工具专用密钥"><button type="button" id="choose-key" data-app-action disabled>浏览</button></div><span class="field-error" id="key-error" hidden></span></div><div class="button-group key-actions"><button type="button" id="generate-key" data-app-action disabled>生成专用密钥</button><button type="button" class="link" id="open-authorization" data-app-action disabled>首次授权此服务器</button></div><p class="hint">首次授权使用无口令 ED25519 密钥。其他密钥可在服务器完成授权后选择使用，密码不保存。</p></div>
-              <div class="connection-step"><div class="step-heading"><span class="step-number">3</span><div><h3>验证连接与图片目录</h3><p class="hint" id="verification-status">测试只验证当前编辑内容，不切换目标或写入授权。</p></div><button type="button" id="test-server" data-app-action disabled>测试连接</button></div></div>
+              <div class="field login-method"><label for="login-method">登录方式</label><select id="login-method"><option value="password">密码登录</option><option value="key">密钥登录</option></select></div>
+              <div class="field" id="password-field"><label for="login-password">登录密码</label><input type="password" id="login-password" autocomplete="off"><p class="hint">密码仅用于本次登录。自动配置专用密钥，供后续贴图使用，密码不会保存。</p></div>
+              <div class="field" id="key-field" hidden><label for="server-key">私钥文件</label><div class="input-action"><input id="server-key" name="keyFile" autocomplete="off" spellcheck="false" placeholder="选择已获服务器授权的私钥"><button type="button" id="choose-key" data-app-action disabled>浏览</button></div><span class="field-error" id="key-error" hidden></span><p class="hint">使用已有授权的无口令私钥，或已解锁的系统 SSH 密钥。</p></div>
+              <div class="directory-setting"><div class="row"><label for="server-directory">图片保存目录</label><button type="button" class="link" id="use-default-directory">使用默认目录</button></div><div class="input-action"><input id="server-directory" name="remoteDirectory" autocomplete="off" spellcheck="false" placeholder="登录后自动使用用户主目录下的 .cache/termius-images"><button type="button" id="browse-directory" data-app-action disabled>选择远端目录</button></div><p class="hint" id="directory-help">留空即可，登录成功后自动创建默认目录。</p><span class="field-error" id="directory-error" hidden></span>
+              <div id="directory-browser" hidden><p class="mono" id="browse-path"></p><div class="button-group"><button type="button" id="browse-parent">上一级</button><button type="button" id="select-directory">使用此目录</button><button type="button" id="close-browser">收起</button></div><div id="directory-list" class="directory-list"></div></div></div>
+              <div class="notice fingerprint-review" id="fingerprint-review" hidden><strong>首次连接，请确认服务器身份</strong><p class="mono" id="fingerprint-endpoint"></p><p class="mono fingerprint" id="fingerprint-value"></p><p>请与服务器管理员或已有可信记录核对指纹。</p><div class="button-group"><button type="button" id="reject-fingerprint">取消</button><button type="button" id="confirm-fingerprint" class="primary" data-app-action disabled>确认并继续登录</button></div></div>
               </fieldset>
               <div class="notice" id="editor-status" role="status" hidden></div>
               <details id="editor-details-section" hidden><summary>查看详细信息</summary><pre id="editor-details"></pre></details>
-              <div class="actions"><button type="button" id="cancel-edit">取消编辑</button><button type="submit" id="save-server" class="primary" data-app-action disabled>保存服务器</button></div>
-              <p class="hint">保存只更新本机配置。新服务器保存后，需在列表中点击“设为当前目标”。</p>
+              <div class="actions"><button type="button" id="cancel-edit">取消编辑</button><button type="submit" id="save-server" class="primary" data-app-action disabled>登录并保存</button></div>
+              <p class="hint" id="save-target-help">登录成功后保存。Windows 按真实连接地址、端口和用户名自动选择服务器。</p>
             </form>
           </section>
           <p class="footnote">每台服务器独立核对身份。删除本地配置不会删除服务器上的图片、SSH 密钥或已有授权。</p>
@@ -112,7 +111,6 @@
     </div>
   </div>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog"><h2 id="confirm-title">确认操作</h2><p id="confirm-message" class="dialog-message"></p><div class="actions"><button value="cancel" autofocus>取消</button><button value="confirm" id="confirm-action" class="primary">继续</button></div></form></dialog>
-  <dialog id="authorization-dialog" aria-labelledby="authorization-title"><form id="authorization-form"><h2 id="authorization-title">首次授权服务器</h2><p class="mono dialog-message" id="authorization-target"></p><div class="notice"><p>本次操作会将所选密钥的公钥追加到该用户的 authorized_keys，并创建图片目录。已有授权与图片会保留。</p></div><div class="field authorization-password"><label for="authorization-password">Linux 登录密码</label><input type="password" id="authorization-password" autocomplete="off" spellcheck="false" required><p class="hint">仅用于本次 SSH 登录，不保存、不写入日志或命令行。</p></div><div class="actions"><button type="button" id="cancel-authorization">取消</button><button type="submit" class="primary">授权并创建目录</button></div></form></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>
