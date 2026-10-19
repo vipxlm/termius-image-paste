@@ -29,9 +29,9 @@
   };
   const errorIds = { name: 'name-error', host: 'host-error', port: 'port-error', username: 'username-error', remoteDirectory: 'directory-error', keyFile: 'key-error' };
   const stageNames = {
-    reading: '读取图片', clipboard: '读取图片', connecting: '连接服务器',
-    uploading: '正在上传图片', upload: '正在上传图片', inserting: '正在输入图片路径',
-    input: '正在输入图片路径', completed: '处理完成', complete: '处理完成',
+    reading: '读取图片或文件', clipboard: '读取图片或文件', connecting: '连接服务器',
+    uploading: '正在上传文件', upload: '正在上传文件', inserting: '正在输入文件路径',
+    input: '正在输入文件路径', completed: '处理完成', complete: '处理完成',
     cancelled: '操作已取消', authorize: '正在授权服务器', authorizing: '正在授权服务器',
     testing: '正在测试连接', test: '正在测试连接', scanning: '正在读取主机指纹',
     scan: '正在读取主机指纹', fingerprint: '正在读取主机指纹',
@@ -189,7 +189,7 @@
     const profile = activeProfile();
     $('current-name').textContent = profile?.name || '尚未选择服务器';
     $('current-endpoint').textContent = profile ? endpoint(profile) : '在“服务器”页面添加连接，并设为当前目标。';
-    $('current-directory').textContent = profile?.remoteDirectory || '远程图片目录尚未配置';
+    $('current-directory').textContent = profile?.remoteDirectory || '远程上传目录尚未配置';
     const detected = state?.capabilities?.automaticTargetSelection ? state?.runtime?.detectedTarget : null;
     if (detected) notice('home-notice', `${detected.message}（${detected.session || '未读取到真实连接'}）`, profile ? 'success' : 'error');
     else if (!profile) notice('home-notice', state?.capabilities?.automaticTargetSelection ? '先添加服务器并登录，再点击对应 Termius 终端。按地址、端口和用户名识别，与标签名称无关。' : '先添加服务器并登录。');
@@ -200,7 +200,7 @@
     const automatic = Boolean(state?.capabilities?.automaticInput);
     $('shortcut-help').textContent = automatic ? (state?.capabilities?.automaticTargetSelection ? '自动识别当前 Termius 终端的真实连接。上传时保持该会话，等路径出现后再发送。' : '保持当前会话和输入框，等路径出现后再发送。') : '当前环境无法自动输入。请从此窗口上传，再自行复制路径。';
     $('manual-input-note').textContent = automatic ? '窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。' : '当前环境使用手动上传模式。上传后可查看完整路径，需要时自行复制到 Termius。';
-    $('manual-upload-help').textContent = state?.capabilities?.clipboardAvailable ? '也可以在此窗口按 Ctrl + V，或使用下面的按钮。' : '可在此窗口按 Ctrl + V 粘贴图片，或选择本机图片文件。';
+    $('manual-upload-help').textContent = state?.capabilities?.clipboardAvailable ? '也可以在此窗口按 Ctrl + V，或使用下面的按钮。' : '可在此窗口按 Ctrl + V 粘贴图片或文件，或选择本机文件。';
   }
 
   function actionButton(text, onClick, extraClass = '') {
@@ -298,7 +298,7 @@
       ['系统', `${capabilities.platform || '尚未读取'}${capabilities.displayServer ? ` · ${capabilities.displayServer}` : ''}`],
       ['自动输入', capabilities.automaticInput ? '可用，快捷键触发后仍会检查焦点' : '不可用，使用窗口上传并手动复制路径'],
       ['快捷键', capabilities.hotkeyAvailable ? '当前系统支持，实际注册状态见上方' : '当前环境不可用'],
-      ['剪贴板图片', capabilities.clipboardAvailable ? '可后台读取，自动操作保留截图' : '无法后台读取，可在本窗口按 Ctrl + V 或选择图片文件'],
+      ['剪贴板内容', capabilities.clipboardAvailable ? '可后台读取截图；Windows 也支持复制的文件，保留剪贴板内容' : '无法后台读取，可在本窗口按 Ctrl + V 或选择文件'],
       ['托盘', capabilities.trayAvailable ? '可用，后台运行时可收起到托盘' : '不可用，后台运行时最小化到任务栏，窗口仍可找回']
     ];
     $('capability-list').replaceChildren();
@@ -568,7 +568,7 @@
       applySettings(settings);
       editorDirty = false;
       $('editor-dirty').textContent = '已登录并保存';
-      setEditorStatus('登录成功，图片目录已就绪。服务器配置已保存。', 'success');
+      setEditorStatus('登录成功，上传目录已就绪。服务器配置已保存。', 'success');
       renderEditorTrust();
       toast('服务器已登录并保存');
     });
@@ -603,7 +603,7 @@
 
   async function removeProfile(profile) {
     const active = profile.id === activeProfile()?.id;
-    const approved = await confirmAction('删除本地服务器配置？', `删除“${profile.name}”的本地配置？${active ? '\n这是当前上传目标，删除后请重新确认上传目标。' : ''}\n\n服务器上的图片、SSH 密钥与已有授权均会保留。`, '删除配置');
+    const approved = await confirmAction('删除本地服务器配置？', `删除“${profile.name}”的本地配置？${active ? '\n这是当前上传目标，删除后请重新确认上传目标。' : ''}\n\n服务器上的文件、SSH 密钥与已有授权均会保留。`, '删除配置');
     if (!approved) return;
     await perform('正在删除本地配置…', 'servers', async () => {
       applySettings(await invoke('remove_server', { id: profile.id }));
@@ -670,7 +670,7 @@
   async function uploadClipboard() {
     if (!activeProfile()) { notice('upload-error', '请先选择当前上传目标。', 'error'); return; }
     showPage('home', false);
-    await perform('正在读取剪贴板图片…', 'upload', async () => {
+    await perform('正在读取剪贴板内容…', 'upload', async () => {
       await invoke('upload_clipboard');
       await refreshState();
     });
@@ -679,20 +679,20 @@
   async function uploadFile(path = null) {
     if (!activeProfile()) { notice('upload-error', '请先选择当前上传目标。', 'error'); showPage('home'); return; }
     showPage('home', false);
-    await perform('正在准备上传图片…', 'upload', async () => {
-      const selectedPath = path || await invoke('choose_image_file');
+    await perform('正在准备上传文件…', 'upload', async () => {
+      const selectedPath = path || await invoke('choose_upload_file');
       if (!selectedPath) return;
       await invoke('upload_file', { path: selectedPath });
       await refreshState();
     });
   }
 
-  function readImageData(file) {
+  function readFileData(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.addEventListener('load', () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('无法读取这张图片，请选择图片文件。')), { once: true });
-      reader.addEventListener('error', () => reject(new Error('读取剪贴板图片失败，请重新截图或选择图片文件。')), { once: true });
-      reader.addEventListener('abort', () => reject(new Error('图片读取已取消。')), { once: true });
+      reader.addEventListener('load', () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('无法读取文件，请重新选择。')), { once: true });
+      reader.addEventListener('error', () => reject(new Error('读取剪贴板文件失败，请重新复制或选择文件。')), { once: true });
+      reader.addEventListener('abort', () => reject(new Error('文件读取已取消。')), { once: true });
       reader.readAsDataURL(file);
     });
   }
@@ -703,8 +703,19 @@
     await perform('正在读取粘贴的图片…', 'upload', async () => {
       if (file.size > 32 * 1024 * 1024) throw new Error('图片不能超过 32 MiB，请缩小截图范围。');
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('目前支持 PNG、JPEG 和 WebP 图片，请选择其他图片文件。');
-      const dataUrl = await readImageData(file);
+      const dataUrl = await readFileData(file);
       await invoke('upload_image_data', { dataUrl });
+      await refreshState();
+    });
+  }
+
+  async function uploadPastedFile(file) {
+    showPage('home', false);
+    if (!activeProfile()) { notice('upload-error', '请先选择当前上传目标。', 'error'); return; }
+    await perform('正在读取粘贴的文件…', 'upload', async () => {
+      if (file.size > 32 * 1024 * 1024) throw new Error('粘贴文件不能超过 32 MiB，请改用选择文件或拖入。');
+      const dataUrl = await readFileData(file);
+      await invoke('upload_file_data', { name: file.name, dataUrl });
       await refreshState();
     });
   }
@@ -712,7 +723,7 @@
   async function copyPath() {
     const path = state?.runtime?.lastResult?.path;
     if (!path) return;
-    if (!await confirmAction('复制图片路径', '复制路径会替换剪贴板中的截图。远程图片会保留。确认现在复制路径？', '复制路径')) return;
+    if (!await confirmAction('复制文件路径', '复制路径会替换剪贴板中的内容。远程文件会保留。确认现在复制路径？', '复制路径')) return;
     await perform('正在复制路径…', 'upload', async () => {
       await invoke('copy_path', { path });
       toast('远程路径已复制到剪贴板');
@@ -733,7 +744,7 @@
   async function connect() {
     if (connecting) return;
     if (!bridgeAvailable) {
-      showDisconnected('请通过安装后的贴图助手打开。当前页面不能连接服务器、上传图片或保存配置，界面不会模拟成功。', true);
+      showDisconnected('请通过安装后的贴图助手打开。当前页面不能连接服务器、上传文件或保存配置，界面不会模拟成功。', true);
       return;
     }
     connecting = true;
@@ -753,7 +764,7 @@
             if (payload.type !== 'drop') return;
             $('upload-zone').classList.remove('drag-over');
             const paths = payload.paths || [];
-            if (paths.length !== 1) { toast('请每次拖入一张图片，避免上传到错误目标。'); return; }
+            if (paths.length !== 1) { toast('请每次拖入一个文件，避免上传到错误目标。'); return; }
             if (!uiBusy && !isRunning()) uploadFile(paths[0]);
             else toast('已有操作正在进行，请等待完成。');
           });
@@ -761,7 +772,7 @@
           unlistenDrop = await tauri.event.listen('tauri://drag-drop', event => {
             const paths = event.payload?.paths || [];
             if (paths.length === 1 && !uiBusy && !isRunning()) uploadFile(paths[0]);
-            else if (paths.length > 1) toast('请每次拖入一张图片。');
+            else if (paths.length > 1) toast('请每次拖入一个文件。');
           });
         }
       }
@@ -835,8 +846,17 @@
   $('retry-connection').addEventListener('click', connect);
   document.addEventListener('paste', event => {
     if (currentPage !== 'home' || event.target.closest?.('input,textarea,[contenteditable="true"]') || !connected || uiBusy || isRunning()) return;
-    const image = Array.from(event.clipboardData?.files || []).find(file => file.type.startsWith('image/'));
-    if (image) { event.preventDefault(); uploadPastedImage(image); return; }
+    const files = Array.from(event.clipboardData?.files || []);
+    if (files.length > 1) { event.preventDefault(); toast('请每次只粘贴一个文件。'); return; }
+    if (files.length === 1) {
+      event.preventDefault();
+      const file = files[0];
+      // Native Windows file paste preserves original bytes and handles large files.
+      if (state?.capabilities?.platform === 'Windows') uploadClipboard();
+      else if (file.type.startsWith('image/')) uploadPastedImage(file);
+      else uploadPastedFile(file);
+      return;
+    }
     const hasImage = Array.from(event.clipboardData?.items || []).some(item => item.type.startsWith('image/'));
     if (hasImage) { event.preventDefault(); uploadClipboard(); }
   });

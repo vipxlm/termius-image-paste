@@ -346,7 +346,7 @@ async fn login_server(
     let job = begin(
         &app,
         "connecting",
-        "正在登录并准备图片目录…",
+        "正在登录并准备上传目录…",
         Some(target_name(&profile)),
     )?;
     let result = async {
@@ -420,19 +420,16 @@ fn cancel_operation(app: AppHandle) {
 
 #[tauri::command]
 async fn choose_key_file(app: AppHandle) -> AppResult<Option<String>> {
-    choose_file(app, false).await
+    choose_file(app).await
 }
 #[tauri::command]
-async fn choose_image_file(app: AppHandle) -> AppResult<Option<String>> {
-    choose_file(app, true).await
+async fn choose_upload_file(app: AppHandle) -> AppResult<Option<String>> {
+    choose_file(app).await
 }
-async fn choose_file(app: AppHandle, image: bool) -> AppResult<Option<String>> {
+async fn choose_file(app: AppHandle) -> AppResult<Option<String>> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut dialog = app.dialog().file();
-        if image {
-            dialog = dialog.add_filter("图片", &["png", "jpg", "jpeg", "webp"]);
-        }
-        dialog
+        app.dialog()
+            .file()
             .blocking_pick_file()
             .map(|p| {
                 p.into_path()
@@ -447,7 +444,7 @@ async fn choose_file(app: AppHandle, image: bool) -> AppResult<Option<String>> {
 #[tauri::command]
 fn copy_path(app: AppHandle, path: String) -> AppResult<()> {
     if !path.starts_with('/') || path.chars().any(char::is_control) || path.len() > 8192 {
-        return Err(AppError::new("invalid_path", "图片路径无效。"));
+        return Err(AppError::new("invalid_path", "文件路径无效。"));
     }
     app.clipboard().write_text(path).map_err(|e| {
         error(
@@ -458,18 +455,19 @@ fn copy_path(app: AppHandle, path: String) -> AppResult<()> {
     })
 }
 
-enum ImageSource {
+enum UploadSource {
     Clipboard,
     File(PathBuf),
     Bytes(Vec<u8>),
+    FileData { name: String, bytes: Vec<u8> },
 }
 #[tauri::command]
 fn upload_clipboard(app: AppHandle) -> AppResult<()> {
-    start_upload(app, ImageSource::Clipboard, None)
+    start_upload(app, UploadSource::Clipboard, None)
 }
 #[tauri::command]
 fn upload_file(app: AppHandle, path: String) -> AppResult<()> {
-    start_upload(app, ImageSource::File(PathBuf::from(path)), None)
+    start_upload(app, UploadSource::File(PathBuf::from(path)), None)
 }
 #[tauri::command]
 fn upload_image_data(app: AppHandle, data_url: String) -> AppResult<()> {
@@ -498,7 +496,32 @@ fn upload_image_data(app: AppHandle, data_url: String) -> AppResult<()> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| error("invalid_image", "图片编码无效。", e))?;
-    start_upload(app, ImageSource::Bytes(bytes), None)
+    start_upload(app, UploadSource::Bytes(bytes), None)
+}
+#[tauri::command]
+fn upload_file_data(app: AppHandle, name: String, data_url: String) -> AppResult<()> {
+    use base64::Engine;
+    if data_url.len() > 48 * 1024 * 1024 {
+        return Err(AppError::new(
+            "file_too_large",
+            "粘贴文件不能超过 32 MiB，请改用选择文件或拖入。",
+        ));
+    }
+    let (_, data) = data_url
+        .split_once(',')
+        .filter(|(header, _)| header.starts_with("data:") && header.ends_with(";base64"))
+        .ok_or_else(|| AppError::new("invalid_file", "粘贴文件编码无效。"))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| error("invalid_file", "粘贴文件编码无效。", e))?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err(AppError::new(
+            "file_too_large",
+            "粘贴文件不能超过 32 MiB，请改用选择文件或拖入。",
+        ));
+    }
+    core::upload_filename(&name)?;
+    start_upload(app, UploadSource::FileData { name, bytes }, None)
 }
 fn prompt_path(path: &str) -> String {
     if path
@@ -512,7 +535,7 @@ fn prompt_path(path: &str) -> String {
 }
 fn start_upload(
     app: AppHandle,
-    source: ImageSource,
+    source: UploadSource,
     target: Option<platform::Target>,
 ) -> AppResult<()> {
     let target = match target {
@@ -559,16 +582,16 @@ fn start_upload(
     let job = begin(
         &app,
         "clipboard",
-        "正在读取图片…",
+        "正在读取图片或文件…",
         Some(target_name(&profile)),
     )?;
     tauri::async_runtime::spawn(async move {
         let result: AppResult<LastResult> = async {
             let handle = app.clone();
-            let image =
-                tauri::async_runtime::spawn_blocking(move || prepare_image(&handle, source))
+            let prepared =
+                tauri::async_runtime::spawn_blocking(move || prepare_upload(&handle, source))
                     .await
-                    .map_err(|e| error("image_prepare", "读取图片失败。", e))??;
+                    .map_err(|e| error("image_prepare", "读取图片或文件失败。", e))??;
             if job.token.is_cancelled() {
                 return Err(AppError::new("cancelled", "操作已取消。"));
             }
@@ -582,16 +605,16 @@ fn start_upload(
                     "当前连接或设置已变化，已停止上传，请重新触发贴图。",
                 ));
             }
-            stage(&app, &job, "正在上传图片…", "upload");
+            stage(&app, &job, "正在上传文件…", "upload");
             let remote = s
                 .ssh
-                .upload(&profile, image.path(), job.token.clone())
+                .upload(&profile, &prepared.path, &prepared.name, job.token.clone())
                 .await?;
             let mut status = "success";
-            let mut message = "图片已上传。可选中或复制下方路径，在目标会话使用。".to_string();
+            let mut message = "文件已上传。可选中或复制下方路径，在目标会话使用。".to_string();
             let mut result_stage = "uploaded";
             if let Some(target) = target {
-                stage(&app, &job, "图片已上传，准备填入路径…", "input");
+                stage(&app, &job, "文件已上传，准备填入路径…", "input");
                 for _ in 0..50 {
                     if !platform::modifiers_down() {
                         break;
@@ -603,11 +626,11 @@ fn start_upload(
                     || !platform::target_unchanged(&target)
                 {
                     status = "warning";
-                    message = "图片已上传，但窗口或设置发生变化，未自动填入路径。".into();
+                    message = "文件已上传，但窗口或设置发生变化，未自动填入路径。".into();
                 } else {
                     match platform::type_path(&target, &prompt_path(&remote)) {
                         Ok(()) => {
-                            message = "图片已上传，路径已填入 Termius；由你发送消息。".into();
+                            message = "文件已上传，路径已填入 Termius；由你发送消息。".into();
                             result_stage = "inserted"
                         }
                         Err(e) => {
@@ -658,13 +681,21 @@ fn start_upload(
     });
     Ok(())
 }
-fn prepare_image(app: &AppHandle, source: ImageSource) -> AppResult<tempfile::NamedTempFile> {
+struct PreparedUpload {
+    path: PathBuf,
+    name: String,
+    _temporary: Option<tempfile::NamedTempFile>,
+}
+fn prepare_upload(app: &AppHandle, source: UploadSource) -> AppResult<PreparedUpload> {
     let image = match source {
-        ImageSource::Clipboard => {
+        UploadSource::Clipboard => {
+            if let Some(path) = platform::clipboard_file()? {
+                return prepare_upload(app, UploadSource::File(path));
+            }
             let clipboard = app.clipboard().read_image().map_err(|e| {
                 error(
                     "clipboard_unavailable",
-                    "剪贴板中没有可读取的图片，请截图后重试；也可选择图片文件。",
+                    "剪贴板中没有可读取的图片或文件，请截图、复制单个文件或选择文件。",
                     e,
                 )
             })?;
@@ -685,23 +716,36 @@ fn prepare_image(app: &AppHandle, source: ImageSource) -> AppResult<tempfile::Na
             .map(image::DynamicImage::ImageRgba8)
             .ok_or_else(|| AppError::new("invalid_image", "剪贴板图片数据不完整。"))?
         }
-        ImageSource::File(path) => {
+        UploadSource::File(path) => {
             if !path.is_absolute() {
-                return Err(AppError::new("invalid_file", "请选择本机图片文件。"));
+                return Err(AppError::new("invalid_file", "请选择本机文件。"));
             }
-            let metadata = std::fs::metadata(&path)
-                .map_err(|e| error("image_read", "无法读取图片文件。", e))?;
-            if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
-                return Err(AppError::new(
-                    "image_too_large",
-                    "请选择不超过 32 MiB 的图片文件。",
-                ));
-            }
-            decode_image(
-                std::fs::read(path).map_err(|e| error("image_read", "读取图片失败。", e))?,
-            )?
+            core::validate_upload_file(&path)?;
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| AppError::new("invalid_file", "文件名无法表示为 UTF-8。"))?
+                .to_string();
+            core::upload_filename(&name)?;
+            return Ok(PreparedUpload {
+                path,
+                name,
+                _temporary: None,
+            });
         }
-        ImageSource::Bytes(bytes) => decode_image(bytes)?,
+        UploadSource::FileData { name, bytes } => {
+            core::upload_filename(&name)?;
+            let mut temporary = tempfile::NamedTempFile::new()
+                .map_err(|e| error("temporary_file", "无法创建临时文件。", e))?;
+            std::io::Write::write_all(&mut temporary, &bytes)
+                .map_err(|e| error("file_write", "无法准备粘贴文件。", e))?;
+            return Ok(PreparedUpload {
+                path: temporary.path().to_path_buf(),
+                name,
+                _temporary: Some(temporary),
+            });
+        }
+        UploadSource::Bytes(bytes) => decode_image(bytes)?,
     };
     let temporary = tempfile::Builder::new()
         .prefix("termius-image-")
@@ -711,7 +755,11 @@ fn prepare_image(app: &AppHandle, source: ImageSource) -> AppResult<tempfile::Na
     image
         .save_with_format(temporary.path(), image::ImageFormat::Png)
         .map_err(|e| error("image_encode", "无法准备 PNG 图片。", e))?;
-    Ok(temporary)
+    Ok(PreparedUpload {
+        path: temporary.path().to_path_buf(),
+        name: "image.png".into(),
+        _temporary: Some(temporary),
+    })
 }
 fn decode_image(bytes: Vec<u8>) -> AppResult<image::DynamicImage> {
     if bytes.len() > 32 * 1024 * 1024 {
@@ -895,7 +943,7 @@ pub fn run() {
                     if event.state == ShortcutState::Pressed {
                         if let Some(target) = platform::capture_target() {
                             if let Err(e) =
-                                start_upload(app.clone(), ImageSource::Clipboard, Some(target))
+                                start_upload(app.clone(), UploadSource::Clipboard, Some(target))
                             {
                                 let s = state(app);
                                 if s.settings.lock().unwrap().notifications {
@@ -940,11 +988,12 @@ pub fn run() {
             browse_remote_directory,
             cancel_operation,
             choose_key_file,
-            choose_image_file,
+            choose_upload_file,
             copy_path,
             upload_clipboard,
             upload_file,
-            upload_image_data
+            upload_image_data,
+            upload_file_data
         ])
         .setup(|app| {
             let directory = app.path().app_config_dir()?;

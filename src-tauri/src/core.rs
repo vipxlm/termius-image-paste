@@ -1,11 +1,10 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::{self, OpenOptions},
+    io::Write,
     net::IpAddr,
     path::{Path, PathBuf},
     process::Stdio,
@@ -718,17 +717,14 @@ impl SshClient {
         &self,
         profile: &ServerProfile,
         local_path: &Path,
+        filename: &str,
         token: CancellationToken,
     ) -> AppResult<String> {
         profile.validate(true)?;
         require_key(profile)?;
-        validate_png(local_path)?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let name = format!(
-            "image-{}-{}.png",
-            Utc::now().format("%Y%m%d-%H%M%S"),
-            Uuid::new_v4().simple()
-        );
+        validate_upload_file(local_path)?;
+        let name = upload_filename(filename)?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30 * 60);
         let remote = format!(
             "{}/{}",
             profile.remote_directory.trim_end_matches('/'),
@@ -755,7 +751,7 @@ impl SshClient {
         .await?;
         let mut args = self.base_args(profile, true)?;
         let local = fs::canonicalize(local_path)
-            .map_err(|e| AppError::because("invalid_image", "无法打开待上传图片。", e))?;
+            .map_err(|e| AppError::because("invalid_file", "无法打开待上传文件。", e))?;
         args.extend(scp_upload_arguments(profile, &local, &remote)?);
         // Force SFTP on clients which predate its becoming the default. Clients
         // too old to support -s fail instead of passing a literal path to a shell.
@@ -1158,26 +1154,46 @@ fn first_public_key(content: &str) -> AppResult<String> {
     }
     Ok(format!("{} {}", parts[0], parts[1]))
 }
-fn validate_png(path: &Path) -> AppResult<()> {
-    let mut file = File::open(path)
-        .map_err(|e| AppError::because("invalid_image", "待上传图片不存在或无法读取。", e))?;
-    if !file
-        .metadata()
-        .map_err(|e| AppError::because("invalid_image", "无法读取图片信息。", e))?
-        .is_file()
-    {
-        return Err(AppError::new("invalid_image", "请选择本机 PNG 图片文件。"));
-    }
-    let mut signature = [0; 8];
-    file.read_exact(&mut signature)
-        .map_err(|e| AppError::because("invalid_image", "图片不是有效的 PNG 文件。", e))?;
-    if signature != *b"\x89PNG\r\n\x1a\n" {
+pub fn validate_upload_file(path: &Path) -> AppResult<()> {
+    let metadata = fs::metadata(path)
+        .map_err(|e| AppError::because("invalid_file", "待上传文件不存在或无法读取。", e))?;
+    if !metadata.is_file() {
         return Err(AppError::new(
-            "invalid_image",
-            "仅接受 PNG 图片，请先转换后上传。",
+            "invalid_file",
+            "请选择普通文件，暂不支持文件夹。",
         ));
     }
     Ok(())
+}
+
+pub fn upload_filename(name: &str) -> AppResult<String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\'])
+        || has_control(name)
+    {
+        return Err(AppError::new(
+            "invalid_file",
+            "文件名无效，不能包含路径或控制字符。",
+        ));
+    }
+    // Keep the extension and stay below the common remote 255-byte filename limit.
+    let (stem, extension) = name
+        .rsplit_once('.')
+        .filter(|(_, ext)| ext.len() <= 32)
+        .map(|(stem, ext)| (stem, format!(".{ext}")))
+        .unwrap_or((name, String::new()));
+    let mut end = stem.len().min(180);
+    while !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    Ok(format!(
+        "{}-{}{}",
+        Uuid::new_v4().simple(),
+        &stem[..end],
+        extension
+    ))
 }
 
 struct PasswordServer {
@@ -1761,13 +1777,42 @@ mod tests {
         );
     }
     #[test]
-    fn png_signature_and_ipv6_target() {
+    fn upload_names_are_unique_safe_and_keep_extensions() {
+        for name in [
+            "报告 a'b.pdf",
+            "archive.tar.gz",
+            "image.jpg",
+            "README",
+            ".env",
+        ] {
+            let a = upload_filename(name).unwrap();
+            let b = upload_filename(name).unwrap();
+            assert_ne!(a, b);
+            assert!(a.ends_with(name));
+            assert!(a.len() <= 255);
+        }
+        let long = upload_filename(&format!("{}.pdf", "文".repeat(200))).unwrap();
+        assert!(long.len() <= 255);
+        assert!(long.ends_with(".pdf"));
+        for bad in ["", ".", "..", "../bad", "a/b", "a\\b", "a\n.pdf", "a\0"] {
+            assert!(upload_filename(bad).is_err(), "{bad:?}");
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let empty = directory.path().join("empty.txt");
+        fs::write(&empty, []).unwrap();
+        validate_upload_file(&empty).unwrap();
+    }
+
+    #[test]
+    fn file_validation_and_ipv6_target() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("图片.png");
         fs::write(&file, b"not png").unwrap();
-        assert!(validate_png(&file).is_err());
+        validate_upload_file(&file).unwrap();
+        assert!(validate_upload_file(directory.path()).is_err());
+        assert!(validate_upload_file(&directory.path().join("missing")).is_err());
         fs::write(&file, b"\x89PNG\r\n\x1a\n").unwrap();
-        validate_png(&file).unwrap();
+        validate_upload_file(&file).unwrap();
         let mut p = profile(directory.path());
         p.host = "2001:db8::1".into();
         assert_eq!(
