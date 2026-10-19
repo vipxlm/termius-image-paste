@@ -26,10 +26,13 @@ const calls = [];
 let stateListener;
 let dragDropListener;
 let capabilities = {};
+let update;
 const settings = { servers: [], activeServerId: null, shortcut: 'Ctrl+Shift+F12' };
 const invoke = async (command, args) => {
   calls.push({ command, args: structuredClone(args) });
-  if (command === 'get_state') return { settings, runtime: {}, capabilities };
+  if (command === 'get_state') return { settings, runtime: {}, capabilities, update };
+  if (command === 'check_update') { update = { ...update, state: 'current', message: '当前已是最新正式版。' }; return; }
+  if (command === 'restart_for_update') return;
   if (command === 'choose_upload_file') return 'C:/isolated/报告.pdf';
   if (['upload_file', 'upload_clipboard', 'upload_file_data', 'upload_image_data'].includes(command)) return;
   if (command === 'scan_host_key') return { key: 'test-public-key', fingerprint: 'SHA256:test' };
@@ -147,3 +150,29 @@ assert(paste([{ name: 'image.png', type: 'image/png', size: 3, dataUrl: 'data:im
 await settle();
 assert.equal(calls.filter(c => c.command.startsWith('upload_')).at(-1).command, 'upload_image_data', 'image paste retains decoder');
 console.log('文件上传：选择 PDF、拖入压缩包、Windows 原生粘贴、普通文件数据粘贴、多文件拒绝、输入框粘贴保留、大小限制和截图回归，全部通过。');
+
+update = { state: 'idle', currentVersion: '2.3.0', message: '后台检查新版本' };
+function updateState(runtime = {}) { stateListener({ payload: { settings, capabilities, runtime, update } }); }
+updateState();
+assert.equal(get('check-update').disabled, false);
+assert.equal(get('restart-update').hidden, true);
+await get('check-update').fire('click');
+assert(calls.some(c => c.command === 'check_update'));
+assert.equal(get('update-status').textContent, '当前已是最新正式版。');
+update = { ...update, state: 'downloading', availableVersion: '2.4.0', message: '后台下载' }; updateState();
+assert.equal(get('check-update').disabled, true);
+assert.equal(get('restart-update').hidden, true);
+update = { ...update, state: 'ready', message: '重启生效' }; updateState();
+assert.equal(get('restart-update').hidden, false);
+assert.equal(get('restart-update').disabled, false);
+assert(get('update-version').textContent.includes('2.4.0'));
+updateState({ operation: { status: 'running' } });
+assert.equal(get('restart-update').disabled, true, 'must not interrupt upload');
+updateState(); await get('restart-update').fire('click');
+assert(calls.some(c => c.command === 'restart_for_update'));
+update = { ...update, state: 'error', message: '网络不可用，保留旧版' }; updateState();
+assert.equal(get('check-update').disabled, false);
+assert.equal(get('upload-file').disabled, false, 'update errors do not block normal uploads');
+update = { ...update, state: 'unsupported' }; updateState();
+assert.equal(get('check-update').disabled, true);
+console.log('在线更新界面：检查、下载、重启就绪、上传时禁止重启、更新失败不影响上传及不支持平台，全部通过。');
