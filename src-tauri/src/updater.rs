@@ -582,7 +582,12 @@ pub fn check(app: tauri::AppHandle) -> AppResult<()> {
     {
         return Ok(());
     }
-    *state.update.lock().unwrap() = Status::new("checking", "正在后台检查 GitHub 最新正式版…");
+    {
+        let mut status = state.update.lock().unwrap();
+        let available_version = status.available_version.clone();
+        *status = Status::new("checking", "正在后台检查 GitHub 最新正式版…");
+        status.available_version = available_version;
+    }
     crate::publish(&app);
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
@@ -596,8 +601,14 @@ pub fn check(app: tauri::AppHandle) -> AppResult<()> {
             });
         #[cfg(not(windows))]
         let result: AppResult<Status> = Err(failure("当前平台不支持静默更新。"));
-        *state.update.lock().unwrap() =
-            result.unwrap_or_else(|error| Status::new("error", &error.message));
+        {
+            let mut status = state.update.lock().unwrap();
+            *status = result.unwrap_or_else(|error| {
+                let mut failed = Status::new("error", &error.message);
+                failed.available_version = status.available_version.clone();
+                failed
+            });
+        }
         state
             .update_checking
             .store(false, std::sync::atomic::Ordering::SeqCst);

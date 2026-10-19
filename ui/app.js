@@ -318,6 +318,17 @@
 
   function renderUpdate() {
     const update = state?.update;
+    const hasUpdate = Boolean(update?.availableVersion && update.availableVersion !== update.currentVersion && update.state !== 'unsupported');
+    const updateHint = hasUpdate
+      ? `新版本 v${update.availableVersion}${update.state === 'ready' ? ' 已就绪，重启生效' : ' 可用，查看更新状态'}`
+      : '查看版本和更新状态';
+    $('app-version').textContent = update?.currentVersion ? `v${update.currentVersion}` : '版本读取中';
+    $('version-update-link').disabled = !connected || !update;
+    $('version-update-link').title = updateHint;
+    $('version-update-link').setAttribute('aria-label', `${update?.currentVersion ? `当前版本 v${update.currentVersion}，` : ''}${updateHint}`);
+    $('settings-nav').setAttribute('aria-label', `快捷键与偏好，${updateHint}`);
+    $('settings-update-dot').hidden = !hasUpdate;
+    $('version-update-dot').hidden = !hasUpdate;
     $('update-version').textContent = update ? `当前版本 ${update.currentVersion}${update.availableVersion ? ` · 新版本 ${update.availableVersion}` : ''}` : '版本信息暂不可用';
     $('update-status').textContent = update?.message || '请通过桌面应用检查更新。';
     $('restart-update').hidden = update?.state !== 'ready';

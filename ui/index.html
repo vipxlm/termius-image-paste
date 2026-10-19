@@ -18,11 +18,11 @@
   </svg>
   <div class="app">
     <aside class="sidebar">
-      <div class="brand"><span class="brandmark"><svg aria-hidden="true"><use href="#icon-image"/></svg></span><span>贴图助手</span></div>
+      <div class="brand"><span class="brandmark"><svg aria-hidden="true"><use href="#icon-image"/></svg></span><div class="brand-copy"><span>贴图助手</span><button type="button" class="brand-version" id="version-update-link" data-page="settings" aria-controls="page-settings" disabled><span id="app-version">版本读取中</span><span class="update-dot" id="version-update-dot" aria-hidden="true" hidden></span></button></div></div>
       <nav aria-label="主导航">
         <button class="nav" data-page="home" aria-controls="page-home" aria-current="page"><svg aria-hidden="true"><use href="#icon-home"/></svg>概览</button>
         <button class="nav" data-page="servers" aria-controls="page-servers"><svg aria-hidden="true"><use href="#icon-server"/></svg>服务器</button>
-        <button class="nav" data-page="settings" aria-controls="page-settings"><svg aria-hidden="true"><use href="#icon-keyboard"/></svg>快捷键与偏好</button>
+        <button class="nav" id="settings-nav" data-page="settings" aria-controls="page-settings"><svg aria-hidden="true"><use href="#icon-keyboard"/></svg>快捷键与偏好<span class="update-dot" id="settings-update-dot" aria-hidden="true" hidden></span></button>
       </nav>
       <div class="sidebar-foot"><p>截图留在剪贴板</p><p>路径填好，由你发送</p></div>
     </aside>
