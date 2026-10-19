@@ -313,7 +313,7 @@
       $('capability-list').append(row);
     });
     notice('capability-description', capabilities.description || '实际能力由本地应用检测。没有自动输入能力时，仍可上传文件并查看路径。', capabilities.automaticInput ? 'neutral' : '');
-    $('tray-description').textContent = capabilities.trayAvailable ? '继续接收贴图快捷键，可从托盘菜单退出。' : '托盘不可用时最小化到任务栏，不会将窗口隐藏到无法找回的位置。';
+    $('tray-description').textContent = capabilities.trayAvailable ? '开启时关闭窗口收起到托盘，关闭此选项则最小化到任务栏。退出请使用托盘菜单。' : '托盘不可用时，关闭窗口会最小化到任务栏并继续运行。';
   }
 
   function renderUpdate() {
@@ -864,7 +864,7 @@
     catch (error) { notice('upload-error', errorText(error), 'error'); }
     finally { renderAvailability(); }
   });
-  $('check-update').addEventListener('click', () => perform('正在检查新版本…', 'preferences', async () => {
+  $('check-update').addEventListener('click', () => perform('', 'preferences', async () => {
     await invoke('check_update');
     await refreshState();
   }));

@@ -27,11 +27,16 @@ let stateListener;
 let dragDropListener;
 let capabilities = {};
 let update;
+let failUpdate = false;
 const settings = { servers: [], activeServerId: null, shortcut: 'Ctrl+Shift+F12' };
 const invoke = async (command, args) => {
   calls.push({ command, args: structuredClone(args) });
   if (command === 'get_state') return { settings, runtime: {}, capabilities, update };
-  if (command === 'check_update') { update = { ...update, state: 'current', message: '当前已是最新正式版。' }; return; }
+  if (command === 'check_update') {
+    if (failUpdate) throw new Error('更新检查启动失败');
+    update = { ...update, state: 'checking', message: '正在后台检查 GitHub 最新正式版…' };
+    return;
+  }
   if (command === 'restart_for_update') return;
   if (command === 'choose_upload_file') return 'C:/isolated/报告.pdf';
   if (['upload_file', 'upload_clipboard', 'upload_file_data', 'upload_image_data'].includes(command)) return;
@@ -161,7 +166,23 @@ assert.equal(get('version-update-dot').hidden, true);
 assert.equal(get('restart-update').hidden, true);
 await get('check-update').fire('click');
 assert(calls.some(c => c.command === 'check_update'));
+assert.equal(get('update-status').textContent, '正在后台检查 GitHub 最新正式版…');
+assert.equal(get('preferences-status').hidden, true, 'checking status must only come from backend');
+assert.equal(get('check-update').disabled, true);
+update = { ...update, state: 'current', message: '当前已是最新正式版。' }; updateState();
 assert.equal(get('update-status').textContent, '当前已是最新正式版。');
+assert.equal(get('preferences-status').hidden, true, 'completed check must not leave a checking notice');
+failUpdate = true;
+await get('check-update').fire('click');
+assert.equal(get('preferences-status').textContent, '更新检查启动失败');
+assert.equal(get('check-update').disabled, false, 'failed invocation can be retried');
+failUpdate = false;
+await get('check-update').fire('click');
+assert.equal(get('preferences-status').hidden, true, 'retry clears the previous invocation error');
+update = { ...update, state: 'error', message: '无法连接 GitHub 或请求超时，请稍后重试。' }; updateState();
+assert.equal(get('update-status').textContent, update.message);
+assert.equal(get('preferences-status').hidden, true, 'network failure must not leave a checking notice');
+assert.equal(get('check-update').disabled, false);
 update = { ...update, state: 'downloading', availableVersion: '2.4.0', message: '后台下载' }; updateState();
 assert.equal(get('settings-update-dot').hidden, false);
 assert.equal(get('version-update-dot').hidden, false);
