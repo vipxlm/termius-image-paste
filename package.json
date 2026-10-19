@@ -1,6 +1,6 @@
 {
   "name": "termius-image-paste",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/vipxlm/termius-image-paste.git" },

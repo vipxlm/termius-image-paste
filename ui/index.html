@@ -31,18 +31,18 @@
       <div class="connection-banner notice" id="connection-banner" role="status"><div><strong id="connection-title">正在连接本地应用</strong><p id="connection-message">配置和操作结果将由本机应用提供。</p></div><button type="button" id="retry-connection" hidden>重新连接</button></div>
       <main>
         <section class="page" id="page-home" aria-labelledby="home-title">
-          <div class="heading"><div><h1 id="home-title" tabindex="-1">贴图概览</h1><p class="muted">把截图带进远程对话。</p></div><button type="button" id="toggle-enabled" data-app-action disabled>暂停贴图</button></div>
+          <div class="heading"><div><h1 id="home-title" tabindex="-1">贴图概览</h1><p class="muted">把截图和文件带进远程对话。</p></div><button type="button" id="toggle-enabled" data-app-action disabled>暂停贴图</button></div>
           <section class="target-panel" aria-label="当前上传目标">
             <div class="row"><span class="eyebrow">当前上传目标</span><button type="button" class="link" id="manage-target">管理服务器</button></div>
             <div class="target-name"><span class="server-icon"><svg aria-hidden="true"><use href="#icon-server"/></svg></span><div><h2 id="current-name">尚未选择服务器</h2><p class="mono muted" id="current-endpoint">连接本地应用后显示目标</p></div></div>
             <div class="notice" id="home-notice">先添加服务器并登录。</div>
-            <div class="target-footer"><span class="mono muted" id="current-directory">远程图片目录尚未配置</span><button type="button" id="check-active" data-app-action disabled>编辑服务器</button></div>
+            <div class="target-footer"><span class="mono muted" id="current-directory">远程上传目录尚未配置</span><button type="button" id="check-active" data-app-action disabled>编辑服务器</button></div>
           </section>
           <section class="section" aria-labelledby="manual-upload-title">
             <div class="section-title"><h2 id="manual-upload-title">从此窗口上传</h2><span class="small muted">上传后显示路径，由你复制</span></div>
             <div class="upload-zone" id="upload-zone" aria-describedby="manual-upload-help">
-              <svg aria-hidden="true"><use href="#icon-upload"/></svg><div><strong>将图片文件拖到这里</strong><p class="small muted" id="manual-upload-help">也可以在此窗口按 Ctrl + V，或使用下面的按钮。</p></div>
-              <div class="button-group"><button type="button" id="upload-clipboard" data-app-action disabled>上传剪贴板图片</button><button type="button" id="upload-file" data-app-action disabled>选择图片</button></div>
+              <svg aria-hidden="true"><use href="#icon-upload"/></svg><div><strong>将图片或文件拖到这里</strong><p class="small muted" id="manual-upload-help">也可以在此窗口按 Ctrl + V，或使用下面的按钮。</p></div>
+              <div class="button-group"><button type="button" id="upload-clipboard" data-app-action disabled>上传剪贴板内容</button><button type="button" id="upload-file" data-app-action disabled>选择文件</button></div>
             </div>
             <p class="hint" id="manual-input-note">窗口内上传只显示路径。需要自动输入时，请回到 Termius 使用贴图快捷键。</p>
             <div class="notice error" id="upload-error" role="alert" hidden></div>
@@ -57,7 +57,7 @@
             <div id="result-content" hidden>
               <div class="notice" id="result-summary" role="status"><strong id="result-status"></strong><p id="result-message"></p></div>
               <p class="small mono muted" id="result-target"></p>
-              <div class="path-result" id="result-path-section" hidden><label for="result-path">远程图片路径</label><textarea id="result-path" class="mono" rows="2" readonly spellcheck="false"></textarea><div class="row"><p class="hint">复制路径会替换剪贴板中的截图，需要时再复制。</p><button type="button" id="copy-path" data-app-action disabled>复制路径</button></div></div>
+              <div class="path-result" id="result-path-section" hidden><label for="result-path">远程文件路径</label><textarea id="result-path" class="mono" rows="2" readonly spellcheck="false"></textarea><div class="row"><p class="hint">复制路径会替换剪贴板中的内容，需要时再复制。</p><button type="button" id="copy-path" data-app-action disabled>复制路径</button></div></div>
               <details id="result-details-section" hidden><summary>查看详细信息</summary><pre id="result-details"></pre></details>
             </div>
           </section>
@@ -81,7 +81,7 @@
               <div class="field login-method"><label for="login-method">登录方式</label><select id="login-method"><option value="password">密码登录</option><option value="key">密钥登录</option></select></div>
               <div class="field" id="password-field"><label for="login-password">登录密码</label><input type="password" id="login-password" autocomplete="off"><p class="hint">密码仅用于本次登录。自动配置专用密钥，供后续贴图使用，密码不会保存。</p></div>
               <div class="field" id="key-field" hidden><label for="server-key">私钥文件</label><div class="input-action"><input id="server-key" name="keyFile" autocomplete="off" spellcheck="false" placeholder="选择已获服务器授权的私钥"><button type="button" id="choose-key" data-app-action disabled>浏览</button></div><span class="field-error" id="key-error" hidden></span><p class="hint">使用已有授权的无口令私钥，或已解锁的系统 SSH 密钥。</p></div>
-              <div class="directory-setting"><div class="row"><label for="server-directory">图片保存目录</label><button type="button" class="link" id="use-default-directory">使用默认目录</button></div><div class="input-action"><input id="server-directory" name="remoteDirectory" autocomplete="off" spellcheck="false" placeholder="登录后自动使用用户主目录下的 .cache/termius-images"><button type="button" id="browse-directory" data-app-action disabled>选择远端目录</button></div><p class="hint" id="directory-help">留空即可，登录成功后自动创建默认目录。</p><span class="field-error" id="directory-error" hidden></span>
+              <div class="directory-setting"><div class="row"><label for="server-directory">文件保存目录</label><button type="button" class="link" id="use-default-directory">使用默认目录</button></div><div class="input-action"><input id="server-directory" name="remoteDirectory" autocomplete="off" spellcheck="false" placeholder="登录后自动使用用户主目录下的 .cache/termius-images"><button type="button" id="browse-directory" data-app-action disabled>选择远端目录</button></div><p class="hint" id="directory-help">留空即可，登录成功后自动创建默认目录。</p><span class="field-error" id="directory-error" hidden></span>
               <div id="directory-browser" hidden><p class="mono" id="browse-path"></p><div class="button-group"><button type="button" id="browse-parent">上一级</button><button type="button" id="select-directory">使用此目录</button><button type="button" id="close-browser">收起</button></div><div id="directory-list" class="directory-list"></div></div></div>
               <div class="notice fingerprint-review" id="fingerprint-review" hidden><strong>首次连接，请确认服务器身份</strong><p class="mono" id="fingerprint-endpoint"></p><p class="mono fingerprint" id="fingerprint-value"></p><p>请与服务器管理员或已有可信记录核对指纹。</p><div class="button-group"><button type="button" id="reject-fingerprint">取消</button><button type="button" id="confirm-fingerprint" class="primary" data-app-action disabled>确认并继续登录</button></div></div>
               </fieldset>

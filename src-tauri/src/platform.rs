@@ -50,11 +50,11 @@ pub fn capabilities() -> Capabilities {
         clipboard_available: !wayland,
         tray_available: false,
         description: if wayland {
-            "Wayland：请在窗口内粘贴或选择图片上传，再手动取用路径。"
+            "Wayland：请在窗口内粘贴或选择图片或文件上传，再手动取用路径。"
         } else if available {
             "仅在 Termius 位于前台时监听快捷键；切换窗口后停止自动输入。"
         } else {
-            "无法可靠检测前台窗口，自动输入已停用；仍可在窗口内上传图片。"
+            "无法可靠检测前台窗口，自动输入已停用；仍可在窗口内上传图片或文件。"
         }
         .into(),
     }
@@ -118,6 +118,77 @@ pub fn process_executable(process: u32) -> Option<std::path::PathBuf> {
 }
 pub fn modifiers_down() -> bool {
     native::modifiers_down()
+}
+
+/// Explorer exposes copied files as CF_HDROP. Read only; never clear the clipboard.
+/// Other desktops use in-window file paste, selection or drag-and-drop.
+pub fn clipboard_file() -> crate::core::AppResult<Option<std::path::PathBuf>> {
+    #[cfg(windows)]
+    {
+        use crate::core::AppError;
+        use std::{
+            ffi::{c_void, OsString},
+            os::windows::ffi::OsStringExt,
+            ptr,
+        };
+        #[link(name = "user32")]
+        extern "system" {
+            fn OpenClipboard(owner: *mut c_void) -> i32;
+            fn CloseClipboard() -> i32;
+            fn IsClipboardFormatAvailable(format: u32) -> i32;
+            fn GetClipboardData(format: u32) -> *mut c_void;
+        }
+        #[link(name = "shell32")]
+        extern "system" {
+            fn DragQueryFileW(drop: *mut c_void, index: u32, buffer: *mut u16, length: u32) -> u32;
+        }
+        struct ClipboardGuard;
+        impl Drop for ClipboardGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    CloseClipboard();
+                }
+            }
+        }
+        unsafe {
+            if OpenClipboard(ptr::null_mut()) == 0 {
+                return Err(AppError::new(
+                    "clipboard_unavailable",
+                    "剪贴板正被其他程序使用，请稍后重试。",
+                ));
+            }
+            let _guard = ClipboardGuard;
+            if IsClipboardFormatAvailable(15) == 0 {
+                return Ok(None);
+            }
+            let drop = GetClipboardData(15);
+            if drop.is_null() {
+                return Err(AppError::new(
+                    "clipboard_unavailable",
+                    "无法读取剪贴板文件，请重新复制。",
+                ));
+            }
+            if DragQueryFileW(drop, u32::MAX, ptr::null_mut(), 0) != 1 {
+                return Err(AppError::new(
+                    "multiple_files",
+                    "请每次只复制一个文件，暂不支持批量上传。",
+                ));
+            }
+            let length = DragQueryFileW(drop, 0, ptr::null_mut(), 0);
+            if length == 0 || length > 32767 {
+                return Err(AppError::new("invalid_file", "剪贴板文件路径无效。"));
+            }
+            let mut buffer = vec![0; length as usize + 1];
+            if DragQueryFileW(drop, 0, buffer.as_mut_ptr(), length + 1) != length {
+                return Err(AppError::new("invalid_file", "读取剪贴板文件路径失败。"));
+            }
+            return Ok(Some(OsString::from_wide(&buffer[..length as usize]).into()));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
 }
 
 #[cfg(windows)]

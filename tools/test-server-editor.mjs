@@ -18,15 +18,20 @@ class Element {
 for (const match of html.matchAll(/id="([^"]+)"/g)) { assert(!nodes.has(match[1]), `duplicate id: ${match[1]}`); nodes.set(match[1], new Element(match[1])); }
 const get = id => { assert(nodes.has(id), `missing element: ${id}`); return nodes.get(id); };
 const main = new Element();
-const document = { getElementById: get, querySelector: () => main, querySelectorAll: () => [], createElement: () => new Element(), addEventListener() {} };
+const documentEvents = {};
+const document = { getElementById: get, querySelector: () => main, querySelectorAll: () => [], createElement: () => new Element(), addEventListener(name, fn) { documentEvents[name] = fn; } };
 let saved = null;
 let failLogin = false;
 const calls = [];
 let stateListener;
+let dragDropListener;
+let capabilities = {};
 const settings = { servers: [], activeServerId: null, shortcut: 'Ctrl+Shift+F12' };
 const invoke = async (command, args) => {
   calls.push({ command, args: structuredClone(args) });
-  if (command === 'get_state') return { settings, runtime: {}, capabilities: {} };
+  if (command === 'get_state') return { settings, runtime: {}, capabilities };
+  if (command === 'choose_upload_file') return 'C:/isolated/报告.pdf';
+  if (['upload_file', 'upload_clipboard', 'upload_file_data', 'upload_image_data'].includes(command)) return;
   if (command === 'scan_host_key') return { key: 'test-public-key', fingerprint: 'SHA256:test' };
   if (command === 'login_server') {
     if (failLogin) throw new Error(`denied ${args.password}`);
@@ -37,7 +42,12 @@ const invoke = async (command, args) => {
   throw new Error(`unexpected command ${command}`);
 };
 vm.runInNewContext(fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8'), {
-  document, window: { __TAURI__: { core: { invoke }, event: { listen: async (name, callback) => { if (name === 'app-state') stateListener = callback; return () => {}; } } }, addEventListener() {} },
+  document, window: { __TAURI__: { core: { invoke }, event: { listen: async (name, callback) => { if (name === 'app-state') stateListener = callback; if (name === 'tauri://drag-drop') dragDropListener = callback; return () => {}; } } }, addEventListener() {} },
+  FileReader: class {
+    listeners = {};
+    addEventListener(name, fn) { this.listeners[name] = fn; }
+    readAsDataURL(file) { this.result = file.dataUrl; this.listeners.load(); }
+  },
   crypto: webcrypto, Intl, setTimeout: () => 1, clearTimeout() {}, console
 });
 const settle = async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); };
@@ -95,3 +105,45 @@ stateListener({ payload: { settings, capabilities: { automaticInput: true, autom
 assert.equal(get('upload-file').disabled, true, 'unknown session cannot fall back to previous server');
 assert(get('home-notice').textContent.includes('无法匹配'));
 console.log('自动目标界面：目标跟随与无匹配时阻止上传，通过。');
+
+// Exercise file entry points through the same DOM/IPC fixture.
+settings.activeServerId = saved.id;
+capabilities = { platform: 'Windows', clipboardAvailable: true };
+stateListener({ payload: { settings, capabilities, runtime: {} } });
+await get('upload-file').fire('click');
+assert.equal(calls.filter(c => c.command === 'upload_file').at(-1).args.path, 'C:/isolated/报告.pdf');
+dragDropListener({ payload: { paths: ['C:/isolated/archive.zip'] } });
+await settle();
+assert.equal(calls.filter(c => c.command === 'upload_file').at(-1).args.path, 'C:/isolated/archive.zip');
+const countUploads = () => calls.filter(c => c.command.startsWith('upload_')).length;
+const beforeMultipleDrop = countUploads();
+dragDropListener({ payload: { paths: ['a.pdf', 'b.pdf'] } });
+await settle();
+assert.equal(countUploads(), beforeMultipleDrop, 'multiple drop must not silently upload first file');
+function paste(files, target = {}) {
+  let prevented = false;
+  documentEvents.paste({ target, clipboardData: { files }, preventDefault() { prevented = true; } });
+  return prevented;
+}
+assert(paste([{ name: '报告.pdf', type: 'application/pdf', size: 10 }]));
+await settle();
+assert.equal(calls.filter(c => c.command.startsWith('upload_')).at(-1).command, 'upload_clipboard');
+const beforeMultiplePaste = countUploads();
+assert(paste([{ name: 'a.pdf' }, { name: 'b.pdf' }]));
+await settle();
+assert.equal(countUploads(), beforeMultiplePaste, 'multiple paste must not upload first file');
+assert.equal(paste([{ name: 'a.pdf' }], { closest: () => true }), false, 'input fields retain ordinary paste');
+capabilities = { platform: 'Linux' };
+stateListener({ payload: { settings, capabilities, runtime: {} } });
+const file = { name: 'binary.zip', type: 'application/zip', size: 3, dataUrl: 'data:application/zip;base64,AP8B' };
+assert(paste([file]));
+await settle();
+assert.deepEqual(calls.filter(c => c.command === 'upload_file_data').at(-1).args, { name: file.name, dataUrl: file.dataUrl });
+const beforeLarge = countUploads();
+paste([{ ...file, size: 33 * 1024 * 1024 }]);
+await settle();
+assert.equal(countUploads(), beforeLarge, 'oversized web paste must fail before IPC');
+assert(paste([{ name: 'image.png', type: 'image/png', size: 3, dataUrl: 'data:image/png;base64,AAAA' }]));
+await settle();
+assert.equal(calls.filter(c => c.command.startsWith('upload_')).at(-1).command, 'upload_image_data', 'image paste retains decoder');
+console.log('文件上传：选择 PDF、拖入压缩包、Windows 原生粘贴、普通文件数据粘贴、多文件拒绝、输入框粘贴保留、大小限制和截图回归，全部通过。');
