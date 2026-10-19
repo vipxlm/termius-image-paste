@@ -21,6 +21,14 @@ Pull Request 与默认分支更新由 `ci.yml` 检查 Windows 和 Ubuntu 24.04�
 
 ## 范围
 
-发布的是 Windows 便携程序与 Linux ELF / `.deb`，Linux 依赖下限由 Ubuntu 24.04 构建环境决定。没有发布 macOS、ARM 或应用内自动更新。Windows 程序未附带代码签名证书；本流程不需要额外上传个人 PAT 或 SSH 密钥。
+发布的是 Windows 便携程序与 Linux ELF / `.deb`，Linux 依赖下限由 Ubuntu 24.04 构建环境决定。没有发布 macOS 或 ARM。当前源码的 Windows x64 便携正式版支持在线更新；Linux 与开发模式继续手动更新。Windows 程序未附带代码签名证书；本流程不需要额外上传个人 PAT 或 SSH 密钥。
 
 构建任务只有读取源码的权限，发布写权限只交给不执行项目构建的发布任务，通过 GitHub 自动提供的 `GITHUB_TOKEN` 使用。第三方 Actions 固定到官方仓库的精确提交，升级时核对官方发行记录。
+
+## Windows 在线更新的资产约定
+
+保留 `TermiusImagePaste-windows-x86_64.exe` 与 `SHA256SUMS.txt` 的固定资产名，以及标准 `vX.Y.Z` 正式标签。更新器从本仓库 `/releases/latest` 获取版本及 GitHub 自动生成的 EXE `digest`，下载后同时核对 SHA-256 清单。资产缺失、重名、非本仓库 URL、摘要缺失或校验失败时不应用更新。
+
+不需要额外的更新服务、密钥或新发布资产。当前信任边界为 GitHub 仓库发布权限、GitHub HTTPS 和资产摘要；没有独立离线发布签名。后续若更改资产名、目标架构或更新记录结构，需保留已发布更新器的兼容行为。
+
+本地针对测试：`cargo test --locked --manifest-path src-tauri/Cargo.toml` 包含真实更新助手子进程的隔离替换、等待退出、重启和篡改拒绝测试。显式网络检查可运行 `cargo test --locked --manifest-path src-tauri/Cargo.toml updater::tests::live_github_download_to_temporary_directory -- --ignored --exact`，仅下载到临时目录，不替换或启动已安装客户端。

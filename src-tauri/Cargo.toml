@@ -1,6 +1,6 @@
 [package]
 name = "termius-image-paste"
-version = "2.2.0"
+version = "2.3.0"
 description = "Windows 与 Linux 的 Termius 贴图助手"
 license = "MIT"
 repository = "https://github.com/vipxlm/termius-image-paste"

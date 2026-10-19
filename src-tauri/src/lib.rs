@@ -1,6 +1,10 @@
 mod core;
 mod platform;
 mod termius;
+#[cfg(windows)]
+mod update_http;
+mod updater;
+pub use updater::entry as update_entry;
 
 use core::{AppError, AppResult, ServerProfile, Settings, SettingsStore, SshClient};
 use serde::Serialize;
@@ -61,6 +65,7 @@ struct Snapshot {
     capabilities: platform::Capabilities,
     runtime: RuntimeState,
     settings_path: String,
+    update: updater::Status,
 }
 #[derive(Clone)]
 struct Ticket {
@@ -87,6 +92,8 @@ struct AppState {
     closing: AtomicBool,
     tray_available: AtomicBool,
     startup_error: Option<AppError>,
+    update: Mutex<updater::Status>,
+    update_checking: AtomicBool,
 }
 fn error(code: &str, message: &str, detail: impl ToString) -> AppError {
     AppError {
@@ -110,11 +117,13 @@ fn snapshot(app: &AppHandle) -> Snapshot {
     caps.tray_available = s.tray_available.load(Ordering::SeqCst);
     let settings = s.settings.lock().unwrap().clone();
     let runtime = s.runtime.lock().unwrap().clone();
+    let update = s.update.lock().unwrap().clone();
     Snapshot {
         settings,
         capabilities: caps,
         runtime,
         settings_path: s.store.settings_path().to_string_lossy().into(),
+        update,
     }
 }
 fn publish(app: &AppHandle) {
@@ -142,6 +151,9 @@ fn begin(app: &AppHandle, stage: &str, message: &str, target: Option<String>) ->
     let s = state(app);
     ensure_writable(&s)?;
     let mut busy = s.busy.lock().unwrap();
+    if s.closing.load(Ordering::SeqCst) {
+        return Err(AppError::new("closing", "客户端正在退出，请重启后操作。"));
+    }
     if busy.is_some() {
         return Err(AppError::new(
             "operation_busy",
@@ -778,6 +790,36 @@ fn decode_image(bytes: Vec<u8>) -> AppResult<image::DynamicImage> {
         .map_err(|e| error("invalid_image", "图片损坏、格式不支持或尺寸过大。", e))
 }
 
+#[tauri::command]
+fn check_update(app: AppHandle) -> AppResult<()> {
+    updater::check(app)
+}
+#[tauri::command]
+fn restart_for_update(app: AppHandle) -> AppResult<()> {
+    let s = state(&app);
+    let busy = s.busy.lock().unwrap();
+    if busy.is_some() {
+        return Err(AppError::new(
+            "operation_busy",
+            "请等待当前操作完成后再重启。",
+        ));
+    }
+    if s.update.lock().unwrap().state != "ready" {
+        return Err(AppError::new("update_not_ready", "新版本尚未准备好。"));
+    }
+    s.closing.store(true, Ordering::SeqCst);
+    match updater::schedule(true) {
+        Ok(true) => {
+            drop(busy);
+            app.exit(0);
+            Ok(())
+        }
+        result => {
+            s.closing.store(false, Ordering::SeqCst);
+            result.and_then(|_| Err(AppError::new("update_not_ready", "没有可应用的更新。")))
+        }
+    }
+}
 fn show_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -791,6 +833,7 @@ fn quit_app(app: &AppHandle) {
     if let Some(job) = s.busy.lock().unwrap().as_ref() {
         job.token.cancel();
     }
+    let _ = updater::schedule(false);
     app.exit(0);
 }
 async fn linux_tray_host() -> bool {
@@ -978,6 +1021,8 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             get_state,
+            check_update,
+            restart_for_update,
             save_server,
             remove_server,
             set_active_server,
@@ -1029,7 +1074,10 @@ pub fn run() {
                 closing: AtomicBool::new(false),
                 tray_available: AtomicBool::new(false),
                 startup_error,
+                update: Mutex::new(updater::initial()),
+                update_checking: AtomicBool::new(false),
             }));
+            updater::start(app.handle().clone());
             platform::start_watcher();
             let show =
                 tauri::menu::MenuItem::with_id(app, "show", "打开贴图助手", true, None::<&str>)?;
@@ -1121,6 +1169,7 @@ pub fn run() {
         .expect("无法启动贴图助手")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                let _ = updater::schedule(false);
                 if let Some(s) = app.try_state::<Arc<AppState>>() {
                     if let Some(job) = s.busy.lock().unwrap().as_ref() {
                         job.token.cancel();

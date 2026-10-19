@@ -4,6 +4,9 @@ fn main() {
     if std::env::var_os("TERMIUS_ASKPASS_ADDR").is_some() {
         std::process::exit(askpass());
     }
+    if let Some(code) = termius_image_paste_lib::update_entry() {
+        std::process::exit(code);
+    }
     termius_image_paste_lib::run();
 }
 

@@ -138,6 +138,7 @@
       $('browse-directory').disabled = locked || !editorProfile.verifiedAt;
       $('use-default-directory').disabled = uiBusy || isRunning();
     }
+    renderUpdate();
   }
 
   function shortcutParts(value) {
@@ -313,6 +314,26 @@
     });
     notice('capability-description', capabilities.description || '实际能力由本地应用检测。没有自动输入能力时，仍可上传文件并查看路径。', capabilities.automaticInput ? 'neutral' : '');
     $('tray-description').textContent = capabilities.trayAvailable ? '继续接收贴图快捷键，可从托盘菜单退出。' : '托盘不可用时最小化到任务栏，不会将窗口隐藏到无法找回的位置。';
+  }
+
+  function renderUpdate() {
+    const update = state?.update;
+    const hasUpdate = Boolean(update?.availableVersion && update.availableVersion !== update.currentVersion && update.state !== 'unsupported');
+    const updateHint = hasUpdate
+      ? `新版本 v${update.availableVersion}${update.state === 'ready' ? ' 已就绪，重启生效' : ' 可用，查看更新状态'}`
+      : '查看版本和更新状态';
+    $('app-version').textContent = update?.currentVersion ? `v${update.currentVersion}` : '版本读取中';
+    $('version-update-link').disabled = !connected || !update;
+    $('version-update-link').title = updateHint;
+    $('version-update-link').setAttribute('aria-label', `${update?.currentVersion ? `当前版本 v${update.currentVersion}，` : ''}${updateHint}`);
+    $('settings-nav').setAttribute('aria-label', `快捷键与偏好，${updateHint}`);
+    $('settings-update-dot').hidden = !hasUpdate;
+    $('version-update-dot').hidden = !hasUpdate;
+    $('update-version').textContent = update ? `当前版本 ${update.currentVersion}${update.availableVersion ? ` · 新版本 ${update.availableVersion}` : ''}` : '版本信息暂不可用';
+    $('update-status').textContent = update?.message || '请通过桌面应用检查更新。';
+    $('restart-update').hidden = update?.state !== 'ready';
+    $('check-update').disabled = !connected || uiBusy || isRunning() || !update || ['unsupported', 'checking', 'downloading', 'ready'].includes(update.state);
+    $('restart-update').disabled = !connected || uiBusy || isRunning() || update?.state !== 'ready';
   }
 
   function applyState(next) {
@@ -843,6 +864,13 @@
     catch (error) { notice('upload-error', errorText(error), 'error'); }
     finally { renderAvailability(); }
   });
+  $('check-update').addEventListener('click', () => perform('正在检查新版本…', 'preferences', async () => {
+    await invoke('check_update');
+    await refreshState();
+  }));
+  $('restart-update').addEventListener('click', () => perform('正在重启以应用更新…', 'preferences', async () => {
+    await invoke('restart_for_update');
+  }));
   $('retry-connection').addEventListener('click', connect);
   document.addEventListener('paste', event => {
     if (currentPage !== 'home' || event.target.closest?.('input,textarea,[contenteditable="true"]') || !connected || uiBusy || isRunning()) return;
