@@ -1148,19 +1148,11 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let s = state(window.app_handle());
                 if !s.closing.load(Ordering::SeqCst) {
-                    if s.settings.lock().unwrap().close_to_tray {
-                        api.prevent_close();
-                        if s.tray_available.load(Ordering::SeqCst) {
-                            let _ = window.hide();
-                        } else {
-                            let _ = window.minimize();
-                        }
-                    } else {
-                        // A tray icon can keep Tauri alive after its last window
-                        // is destroyed. Explicitly exit while the window still
-                        // exists, so disabling background mode cannot strand it.
-                        api.prevent_close();
-                        quit_app(window.app_handle());
+                    api.prevent_close();
+                    let use_tray = s.settings.lock().unwrap().close_to_tray
+                        && s.tray_available.load(Ordering::SeqCst);
+                    if !use_tray || window.hide().is_err() {
+                        let _ = window.minimize();
                     }
                 }
             }

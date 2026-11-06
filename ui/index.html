@@ -99,7 +99,7 @@
           <form id="preferences-form">
             <div class="setting-row"><div><label for="shortcut-capture" class="setting-title">贴图快捷键</label><p class="muted">点击后直接按下组合键，Esc 取消录入。</p><p class="hint" id="shortcut-runtime"></p></div><button type="button" class="hotkey-input" id="shortcut-capture">尚未读取快捷键</button></div>
             <div class="setting-row"><div><label for="legacy-shortcut" class="setting-title">保留 Ctrl + Alt + V</label><p class="muted">作为备用快捷键。被占用时不影响主快捷键。</p></div><input type="checkbox" id="legacy-shortcut" class="toggle"></div>
-            <div class="setting-row"><div><label for="close-to-tray" class="setting-title">关闭窗口后保持后台运行</label><p class="muted" id="tray-description">有托盘时收起到托盘，没有托盘时最小化到任务栏。</p></div><input type="checkbox" id="close-to-tray" class="toggle"></div>
+            <div class="setting-row"><div><label for="close-to-tray" class="setting-title">关闭窗口时收起到系统托盘</label><p class="muted" id="tray-description">未启用或托盘不可用时最小化到任务栏，程序继续运行。</p></div><input type="checkbox" id="close-to-tray" class="toggle"></div>
             <div class="setting-row"><div><label for="notifications" class="setting-title">上传结果通知</label><p class="muted">提示失败、自动输入取消与上传结果。</p></div><input type="checkbox" id="notifications" class="toggle"></div>
             <section class="capabilities section" aria-labelledby="capabilities-title"><h2 id="capabilities-title">系统与可用能力</h2><dl id="capability-list"><div><dt>系统</dt><dd>等待本地应用</dd></div></dl><div class="notice" id="capability-description">自动输入能力由当前系统和桌面环境决定。</div></section>
             <div class="notice" id="preferences-status" role="status" hidden></div>
